@@ -291,6 +291,18 @@ wss.on('connection', (ws) => {
                 }
                 break;
             }
+            case 'signal': {
+                // Relay WebRTC signaling (offer, answer, ice-candidate)
+                if (!myRoom) return;
+                const other = ws === myRoom.host ? myRoom.guest : myRoom.host;
+                if (other && other.readyState === 1) {
+                    other.send(JSON.stringify({
+                        type: 'signal',
+                        data: msg.data
+                    }));
+                }
+                break;
+            }
             case 'start_bot': {
                 // Host requests a bot game — server acts as the guest
                 if (myRoom && !myRoom.guest) {
@@ -423,7 +435,10 @@ function startBotAI(room) {
             const bp = BARREL_POS[target];
             room.sendTo(room.host, {
                 type: 'opponent_hands',
-                positions: [{ x: bp[0], y: bp[1] }]
+                positions: [
+                    { x: bp[0] - 0.05 + Math.random() * 0.1, y: bp[1] - 0.05 + Math.random() * 0.1 },
+                    { x: bp[0] - 0.05 + Math.random() * 0.1, y: bp[1] - 0.05 + Math.random() * 0.1 }
+                ]
             });
         }
     }, 600 + Math.random() * 600); // 600-1200ms between bot actions

@@ -652,6 +652,43 @@
       background: #ff5252;
       box-shadow: 0 0 8px #ff5252
     }
+
+    /* ===== REMOTE VIDEO (New) ===== */
+    #remoteVideoContainer {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: clamp(160px, 25vw, 240px);
+      aspect-ratio: 16/9;
+      background: rgba(0, 0, 0, .4);
+      border: 2px solid rgba(255, 140, 0, .5);
+      border-radius: 12px;
+      overflow: hidden;
+      z-index: 10;
+      display: none;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    }
+
+    #remoteVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      /* mirror */
+    }
+
+    .video-label {
+      position: absolute;
+      top: 5px;
+      left: 8px;
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #ff8c00;
+      background: rgba(0, 0, 0, .6);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: bold;
+    }
   </style>
 </head>
 
@@ -677,6 +714,14 @@
   <!-- OPPONENT HAND GLOW (orange) -->
   <div class="opp-glow" id="oppGlow1"></div>
   <div class="opp-core" id="oppCore1"></div>
+  <div class="opp-glow" id="oppGlow2"></div>
+  <div class="opp-core" id="oppCore2"></div>
+
+  <!-- REMOTE VIDEO FEED -->
+  <div id="remoteVideoContainer">
+    <div class="video-label">LIVE FEED</div>
+    <video id="remoteVideo" autoplay playsinline></video>
+  </div>
 
   <!-- CONNECTION DOT -->
   <div class="conn-dot" id="connDot" style="display:none"></div>
@@ -768,7 +813,8 @@
       helmetHits: new Map(), processedHits: new Set(),
       // Multiplayer
       mpMode: false, myRole: null, ws: null, oppScore: 0, oppLives: 3,
-      handSendInterval: null
+      handSendInterval: null,
+      pc: null, localStream: null
     };
 
     // ===== AUDIO =====
@@ -1198,6 +1244,7 @@
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
         });
+        S.localStream = stream;
         v.srcObject = stream;
         await v.play();
         webcamReady = true;
@@ -1329,17 +1376,24 @@
         case 'room_created':
           document.getElementById('roomCodeDisplay').textContent = msg.code;
           break;
-        case 'room_joined':
-          document.getElementById('joinStatus').textContent = 'Joined! Starting soon...';
-          document.getElementById('joinStatus').className = 'lobby-status';
-          break;
         case 'opponent_joined':
           document.getElementById('lobbyWait').textContent = 'Opponent connected! Starting...';
           document.getElementById('lobbyWait').classList.remove('waiting');
+          // Host initiates WebRTC call
+          initWebRTC(true);
+          break;
+        case 'room_joined':
+          document.getElementById('joinStatus').textContent = 'Joined! Starting soon...';
+          document.getElementById('joinStatus').className = 'lobby-status';
+          // Guest waits for offer or initiates
+          initWebRTC(false);
           break;
         case 'bot_activated':
           document.getElementById('lobbyWait').textContent = 'Bot ready! Starting...';
           document.getElementById('lobbyWait').classList.remove('waiting');
+          break;
+        case 'signal':
+          handleWebRTCSignal(msg.data);
           break;
         case 'game_start':
           S.mpMode = true;
@@ -1431,12 +1485,71 @@
     }
 
     function renderOpponentHands(positions) {
-      const g = document.getElementById('oppGlow1'), c = document.getElementById('oppCore1');
-      if (!positions || !positions.length) { g.style.display = 'none'; c.style.display = 'none'; return; }
-      const p = positions[0];
-      const x = p.x * window.innerWidth, y = p.y * window.innerHeight;
-      g.style.display = 'block'; g.style.left = x + 'px'; g.style.top = y + 'px';
-      c.style.display = 'block'; c.style.left = x + 'px'; c.style.top = y + 'px';
+      const glows = [document.getElementById('oppGlow1'), document.getElementById('oppGlow2')];
+      const cores = [document.getElementById('oppCore1'), document.getElementById('oppCore2')];
+
+      glows.forEach(g => g.style.display = 'none');
+      cores.forEach(c => c.style.display = 'none');
+
+      if (!positions || !positions.length) return;
+
+      positions.forEach((p, i) => {
+        if (i >= 2) return;
+        const g = glows[i], c = cores[i];
+        const x = p.x * window.innerWidth, y = p.y * window.innerHeight;
+        g.style.display = 'block'; g.style.left = x + 'px'; g.style.top = y + 'px';
+        c.style.display = 'block'; c.style.left = x + 'px'; c.style.top = y + 'px';
+      });
+    }
+
+    // ===== WEBRTC VIDEO FEED (New) =====
+    async function initWebRTC(isHost) {
+      if (S.pc) return;
+      const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+      S.pc = new RTCPeerConnection(config);
+
+      // Add local stream
+      if (S.localStream) {
+        S.localStream.getTracks().forEach(track => S.pc.addTrack(track, S.localStream));
+      }
+
+      // Handle remote stream
+      S.pc.ontrack = (event) => {
+        const remoteVideo = document.getElementById('remoteVideo');
+        const container = document.getElementById('remoteVideoContainer');
+        remoteVideo.srcObject = event.streams[0];
+        container.style.display = 'block';
+      };
+
+      // Handle ICE candidates
+      S.pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          S.ws.send(JSON.stringify({ type: 'signal', data: { candidate: event.candidate } }));
+        }
+      };
+
+      if (isHost) {
+        const offer = await S.pc.createOffer();
+        await S.pc.setLocalDescription(offer);
+        S.ws.send(JSON.stringify({ type: 'signal', data: { offer } }));
+      }
+    }
+
+    async function handleWebRTCSignal(data) {
+      if (!S.pc) await initWebRTC(false);
+
+      if (data.offer) {
+        await S.pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await S.pc.createAnswer();
+        await S.pc.setLocalDescription(answer);
+        S.ws.send(JSON.stringify({ type: 'signal', data: { answer } }));
+      } else if (data.answer) {
+        await S.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.candidate) {
+        try {
+          await S.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) { console.warn('ICE candidate error:', e); }
+      }
     }
 
     function startHandSync() {
