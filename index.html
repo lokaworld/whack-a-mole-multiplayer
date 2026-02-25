@@ -720,7 +720,7 @@
   <!-- REMOTE VIDEO FEED -->
   <div id="remoteVideoContainer">
     <div class="video-label">LIVE FEED</div>
-    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="remoteVideo" autoplay playsinline muted></video>
   </div>
 
   <!-- CONNECTION DOT -->
@@ -1507,35 +1507,51 @@
 
     async function initWebRTC(isHost) {
       if (S.pc) return;
+      console.log('WebRTC: Initializing...', isHost ? 'HOST' : 'GUEST');
       const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       S.pc = new RTCPeerConnection(config);
       iceCandidatesQueue = [];
 
-      // Add local stream
+      // Add local stream (wait if not ready)
+      if (!S.localStream && webcamReady) {
+        console.log('WebRTC: Waiting for local stream...');
+        let attempts = 0;
+        while (!S.localStream && attempts < 50) {
+          await new Promise(r => setTimeout(r, 100));
+          attempts++;
+        }
+      }
+
       if (S.localStream) {
+        console.log('WebRTC: Adding local tracks');
         S.localStream.getTracks().forEach(track => S.pc.addTrack(track, S.localStream));
+      } else {
+        console.warn('WebRTC: Local stream not found, connection may have no video from me');
       }
 
       // Handle remote stream
       S.pc.ontrack = (event) => {
-        console.log('WebRTC: Received remote track');
+        console.log('WebRTC: Received remote track', event.streams);
         const remoteVideo = document.getElementById('remoteVideo');
         const container = document.getElementById('remoteVideoContainer');
         if (event.streams && event.streams[0]) {
           remoteVideo.srcObject = event.streams[0];
           container.style.display = 'block';
-          remoteVideo.play().catch(e => console.warn('Remote video play failed:', e));
+          remoteVideo.play().then(() => console.log('WebRTC: Remote video playing'))
+            .catch(e => console.warn('WebRTC: Remote video play failed:', e));
         }
       };
 
       // Handle ICE candidates
       S.pc.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log('WebRTC: Sending ICE candidate');
           S.ws.send(JSON.stringify({ type: 'signal', data: { candidate: event.candidate } }));
         }
       };
 
       if (isHost) {
+        console.log('WebRTC: Creating offer');
         const offer = await S.pc.createOffer();
         await S.pc.setLocalDescription(offer);
         S.ws.send(JSON.stringify({ type: 'signal', data: { offer } }));
@@ -1546,19 +1562,22 @@
       if (!S.pc) await initWebRTC(false);
 
       if (data.offer) {
+        console.log('WebRTC: Received offer');
         await S.pc.setRemoteDescription(new RTCSessionDescription(data.offer));
         const answer = await S.pc.createAnswer();
         await S.pc.setLocalDescription(answer);
         S.ws.send(JSON.stringify({ type: 'signal', data: { answer } }));
         processQueuedCandidates();
       } else if (data.answer) {
+        console.log('WebRTC: Received answer');
         await S.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
         processQueuedCandidates();
       } else if (data.candidate) {
+        console.log('WebRTC: Received ICE candidate');
         if (S.pc.remoteDescription && S.pc.remoteDescription.type) {
           try {
             await S.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (e) { console.warn('ICE candidate error:', e); }
+          } catch (e) { console.warn('WebRTC: ICE candidate error:', e); }
         } else {
           iceCandidatesQueue.push(data.candidate);
         }
