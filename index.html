@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Whack-a-Mole — Motion Game</title>
+  <meta name="description" content="Whack-a-Mole AR game with MediaPipe hand tracking">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.min.js"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.min.js"
+    crossorigin="anonymous"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: linear-gradient(180deg, #2d4a1e 0%, #1a3010 40%, #0f1a08 100%);
+      color: #fff;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+      cursor: default
+    }
+
+    .screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: opacity .4s;
+      z-index: 10
+    }
+
+    .screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+      z-index: -1
+    }
+
+    /* ===== WEBCAM BACKGROUND ===== */
+    #webcamBg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      display: none
+    }
+
+    #webcamBg.active {
+      display: block
+    }
+
+    #webcamBg video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1)
+    }
+
+    /* ===== MENU ===== */
+    #menuScreen {
+      background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 40%, #388e3c 100%);
+      z-index: 20
+    }
+
+    #menuScreen h1 {
+      font-size: clamp(2.8rem, 9vw, 5.5rem);
+      font-weight: 900;
+      color: #fff;
+      text-shadow: 3px 3px 0 #1b5e20, 0 0 30px rgba(255, 215, 0, .4);
+      margin-bottom: .5rem
+    }
+
+    #menuScreen .subtitle {
+      font-size: clamp(1rem, 3vw, 1.4rem);
+      color: #a5d6a7;
+      margin-bottom: 2rem
+    }
+
+    .btn {
+      padding: 16px 48px;
+      border: none;
+      border-radius: 50px;
+      font-family: inherit;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s;
+      text-transform: uppercase;
+      letter-spacing: 1px
+    }
+
+    .btn:active {
+      transform: scale(.95)
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #ffd700, #ff8c00);
+      color: #1a0e05;
+      box-shadow: 0 6px 20px rgba(255, 165, 0, .4)
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 8px 32px rgba(255, 165, 0, .6);
+      transform: translateY(-2px)
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, .15);
+      color: #fff;
+      border: 2px solid rgba(255, 255, 255, .3);
+      backdrop-filter: blur(8px)
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 16px;
+      margin: 1rem 0
+    }
+
+    .btn-group .btn {
+      padding: 14px 36px;
+      border-radius: 40px
+    }
+
+    .btn-group .btn.selected {
+      background: linear-gradient(135deg, #ffd700, #ff8c00);
+      color: #1a0e05;
+      border: none
+    }
+
+    .btn-group .btn:not(.selected) {
+      background: rgba(255, 255, 255, .1);
+      color: #ccc;
+      border: 2px solid rgba(255, 255, 255, .2)
+    }
+
+    /* ===== GREEN FOREST BORDER ===== */
+    #forestFrame {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 5
+    }
+
+    .tree-left,
+    .tree-right {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: clamp(60px, 10vw, 130px)
+    }
+
+    .tree-left {
+      left: 0
+    }
+
+    .tree-right {
+      right: 0
+    }
+
+    .grass-bottom {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: clamp(40px, 8vh, 80px)
+    }
+
+    /* ===== HUD ===== */
+    #hud {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: clamp(8px, 2vw, 16px) clamp(12px, 3vw, 24px);
+      z-index: 15;
+      pointer-events: none
+    }
+
+    .hud-left {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(0, 0, 0, .5);
+      border-radius: 30px;
+      padding: 6px 14px
+    }
+
+    .hud-heart {
+      width: clamp(28px, 4vw, 42px);
+      height: clamp(28px, 4vw, 42px);
+      transition: all .3s
+    }
+
+    .hud-heart.lost {
+      opacity: .15;
+      transform: scale(.6)
+    }
+
+    .hud-right {
+      display: flex;
+      align-items: center;
+      gap: 10px
+    }
+
+    .score-box {
+      background: rgba(255, 255, 255, .85);
+      border-radius: 20px;
+      padding: 6px 20px;
+      min-width: 80px;
+      text-align: center
+    }
+
+    .score-val {
+      font-size: clamp(1.5rem, 4vw, 2.8rem);
+      font-weight: 900;
+      color: #333;
+      line-height: 1
+    }
+
+    .pause-btn {
+      width: clamp(36px, 5vw, 50px);
+      height: clamp(36px, 5vw, 50px);
+      border-radius: 50%;
+      background: #4caf50;
+      border: none;
+      cursor: pointer;
+      pointer-events: all;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      color: #fff;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, .3)
+    }
+
+    /* ===== BARREL / MOLE HOLES ===== */
+    .barrel {
+      position: absolute;
+      width: clamp(100px, 16vw, 180px);
+      height: clamp(110px, 18vw, 200px);
+      z-index: 8;
+      pointer-events: all;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent
+    }
+
+    .barrel-img {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      height: 60%;
+      pointer-events: none;
+      z-index: 2
+    }
+
+    .mole-slot {
+      position: absolute;
+      bottom: 30%;
+      left: 5%;
+      width: 90%;
+      height: 70%;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      overflow: hidden;
+      z-index: 4
+    }
+
+    .mole-sprite {
+      position: absolute;
+      bottom: -110%;
+      width: 80%;
+      transition: bottom .2s cubic-bezier(.34, 1.56, .64, 1);
+      pointer-events: none
+    }
+
+    .mole-sprite.visible {
+      bottom: 0
+    }
+
+    .mole-sprite.hit-anim {
+      animation: hitBounce .35s
+    }
+
+    @keyframes hitBounce {
+      0% {
+        transform: scale(1) rotate(0)
+      }
+
+      20% {
+        transform: scale(1.25) rotate(-8deg)
+      }
+
+      40% {
+        transform: scale(.9) rotate(8deg)
+      }
+
+      60% {
+        transform: scale(1.1) rotate(-5deg)
+      }
+
+      80% {
+        transform: scale(.97) rotate(3deg)
+      }
+
+      100% {
+        transform: scale(1) rotate(0)
+      }
+    }
+
+    /* ===== SCORE POPUP ===== */
+    .score-popup {
+      position: fixed;
+      font-weight: 900;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      pointer-events: none;
+      z-index: 25;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, .5);
+      animation: scoreUp 1s forwards
+    }
+
+    @keyframes scoreUp {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(.6)
+      }
+
+      25% {
+        transform: translateY(-30px) scale(1.3)
+      }
+
+      100% {
+        opacity: 0;
+        transform: translateY(-80px) scale(1)
+      }
+    }
+
+    .score-popup.plus {
+      color: #fff
+    }
+
+    .score-popup.minus {
+      color: #ff3b30
+    }
+
+    /* ===== PARTICLES ===== */
+    .star-particle {
+      position: fixed;
+      pointer-events: none;
+      z-index: 20;
+      animation: starBurst .6s forwards
+    }
+
+    @keyframes starBurst {
+      0% {
+        opacity: 1;
+        transform: translate(0, 0) scale(1) rotate(0deg)
+      }
+
+      100% {
+        opacity: 0;
+        transform: translate(var(--dx), var(--dy)) scale(0) rotate(360deg)
+      }
+    }
+
+    /* ===== BLUE HAND GLOW ===== */
+    .hand-glow {
+      position: fixed;
+      width: clamp(120px, 20vw, 200px);
+      height: clamp(120px, 20vw, 200px);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 220, 255, .5) 0%, rgba(0, 180, 255, .25) 40%, transparent 70%);
+      pointer-events: none;
+      z-index: 12;
+      transform: translate(-50%, -50%);
+      filter: blur(10px);
+      display: none
+    }
+
+    .hand-core {
+      position: fixed;
+      width: clamp(20px, 4vw, 35px);
+      height: clamp(20px, 4vw, 35px);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 255, 255, .9) 0%, rgba(0, 220, 255, .8) 60%, transparent 100%);
+      pointer-events: none;
+      z-index: 13;
+      transform: translate(-50%, -50%);
+      display: none
+    }
+
+    /* ===== GAME OVER ===== */
+    #gameOverScreen {
+      background: rgba(0, 0, 0, .75);
+      backdrop-filter: blur(8px);
+      z-index: 30
+    }
+
+    .go-panel {
+      background: rgba(255, 255, 255, .1);
+      border: 2px solid rgba(255, 255, 255, .15);
+      border-radius: 28px;
+      padding: clamp(24px, 5vw, 48px);
+      text-align: center;
+      backdrop-filter: blur(20px);
+      max-width: 420px;
+      width: 85vw
+    }
+
+    .go-panel h2 {
+      font-size: clamp(2.2rem, 7vw, 3.5rem);
+      font-weight: 900;
+      color: #ff5252;
+      margin-bottom: .5rem;
+      text-shadow: 0 0 20px rgba(255, 82, 82, .4)
+    }
+
+    .go-panel .final-score {
+      font-size: clamp(3.5rem, 12vw, 6rem);
+      font-weight: 900;
+      color: #ffd700;
+      margin: .5rem 0;
+      text-shadow: 0 0 30px rgba(255, 215, 0, .4)
+    }
+
+    .go-panel .btn-group {
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 1.5rem
+    }
+
+    /* ===== FLASH ===== */
+    #flashOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 0, 0, .3);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .1s;
+      z-index: 25
+    }
+
+    /* ===== TUTORIAL BANNER ===== */
+    #tutorialBanner {
+      position: fixed;
+      top: clamp(60px, 10vh, 90px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, .6);
+      border: 1px solid rgba(255, 215, 0, .4);
+      border-radius: 16px;
+      padding: 10px 28px;
+      font-size: clamp(.85rem, 2vw, 1.1rem);
+      color: #ffd700;
+      z-index: 20;
+      transition: opacity .4s;
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+      opacity: 0
+    }
+
+    @media(max-width:480px) {
+      .barrel {
+        width: 70px;
+        height: 80px
+      }
+    }
+
+    /* ===== LOBBY ===== */
+    #lobbyScreen {
+      background: rgba(0, 0, 0, .85);
+      backdrop-filter: blur(12px);
+      z-index: 30
+    }
+
+    .lobby-panel {
+      background: rgba(255, 255, 255, .08);
+      border: 2px solid rgba(255, 255, 255, .15);
+      border-radius: 28px;
+      padding: clamp(24px, 5vw, 48px);
+      text-align: center;
+      backdrop-filter: blur(20px);
+      max-width: 440px;
+      width: 85vw
+    }
+
+    .lobby-panel h2 {
+      font-size: clamp(1.8rem, 6vw, 2.8rem);
+      font-weight: 900;
+      color: #66bb6a;
+      margin-bottom: 1rem;
+      text-shadow: 0 0 20px rgba(102, 187, 106, .4)
+    }
+
+    .room-code {
+      font-size: clamp(2.5rem, 10vw, 4.5rem);
+      font-weight: 900;
+      letter-spacing: .3em;
+      color: #ffd700;
+      text-shadow: 0 0 30px rgba(255, 215, 0, .5);
+      margin: 1rem 0
+    }
+
+    .room-input {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: .2em;
+      text-align: center;
+      text-transform: uppercase;
+      width: 200px;
+      padding: 12px;
+      border: 2px solid rgba(255, 215, 0, .4);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .1);
+      color: #ffd700;
+      outline: none
+    }
+
+    .room-input::placeholder {
+      color: rgba(255, 215, 0, .3)
+    }
+
+    .lobby-status {
+      color: #a5d6a7;
+      font-size: 1.1rem;
+      margin: 1rem 0;
+      min-height: 1.5em
+    }
+
+    .lobby-status.error {
+      color: #ff5252
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .4
+      }
+    }
+
+    .waiting {
+      animation: pulse 1.5s infinite
+    }
+
+    /* ===== OPPONENT HAND (orange) ===== */
+    .opp-glow {
+      position: fixed;
+      width: clamp(120px, 20vw, 200px);
+      height: clamp(120px, 20vw, 200px);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 140, 0, .5) 0%, rgba(255, 100, 0, .25) 40%, transparent 70%);
+      pointer-events: none;
+      z-index: 12;
+      transform: translate(-50%, -50%);
+      filter: blur(10px);
+      display: none
+    }
+
+    .opp-core {
+      position: fixed;
+      width: clamp(20px, 4vw, 35px);
+      height: clamp(20px, 4vw, 35px);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 255, 255, .9) 0%, rgba(255, 140, 0, .8) 60%, transparent 100%);
+      pointer-events: none;
+      z-index: 13;
+      transform: translate(-50%, -50%);
+      display: none
+    }
+
+    /* ===== DUAL SCOREBOARD ===== */
+    .dual-scores {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 20px;
+      z-index: 15;
+      pointer-events: none
+    }
+
+    .p-score-box {
+      background: rgba(255, 255, 255, .15);
+      backdrop-filter: blur(8px);
+      border-radius: 16px;
+      padding: 8px 20px;
+      text-align: center;
+      min-width: 100px
+    }
+
+    .p-score-box.you {
+      border: 2px solid rgba(0, 220, 255, .5)
+    }
+
+    .p-score-box.opp {
+      border: 2px solid rgba(255, 140, 0, .5)
+    }
+
+    .p-label {
+      font-size: .75rem;
+      text-transform: uppercase;
+      opacity: .7
+    }
+
+    .p-score-val {
+      font-size: clamp(1.5rem, 4vw, 2.5rem);
+      font-weight: 900;
+      line-height: 1
+    }
+
+    .p-score-box.you .p-score-val {
+      color: #00dcff
+    }
+
+    .p-score-box.opp .p-score-val {
+      color: #ff8c00
+    }
+
+    /* ===== CONNECTION DOT ===== */
+    .conn-dot {
+      position: fixed;
+      top: 8px;
+      right: 12px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4caf50;
+      z-index: 20;
+      box-shadow: 0 0 8px #4caf50
+    }
+
+    .conn-dot.disconnected {
+      background: #ff5252;
+      box-shadow: 0 0 8px #ff5252
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- WEBCAM BACKGROUND (AR) -->
+  <div id="webcamBg"><video id="bgVideo" autoplay playsinline muted></video></div>
+
+  <!-- FOREST FRAME BORDER -->
+  <div id="forestFrame">
+    <canvas id="borderCanvas" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+  </div>
+
+  <!-- FLASH OVERLAY -->
+  <div id="flashOverlay"></div>
+
+  <!-- HAND GLOW EFFECTS -->
+  <div class="hand-glow" id="handGlowL"></div>
+  <div class="hand-core" id="handCoreL"></div>
+  <div class="hand-glow" id="handGlowR"></div>
+  <div class="hand-core" id="handCoreR"></div>
+
+  <!-- OPPONENT HAND GLOW (orange) -->
+  <div class="opp-glow" id="oppGlow1"></div>
+  <div class="opp-core" id="oppCore1"></div>
+
+  <!-- CONNECTION DOT -->
+  <div class="conn-dot" id="connDot" style="display:none"></div>
+
+  <!-- DUAL SCOREBOARD (multiplayer) -->
+  <div class="dual-scores" id="dualScores" style="display:none">
+    <div class="p-score-box you">
+      <div class="p-label">YOU</div>
+      <div class="p-score-val" id="myScoreMP">0</div>
+    </div>
+    <div class="p-score-box opp">
+      <div class="p-label">OPPONENT</div>
+      <div class="p-score-val" id="oppScoreMP">0</div>
+    </div>
+  </div>
+
+  <!-- MENU SCREEN -->
+  <div class="screen" id="menuScreen">
+    <h1>🔨 Whack-a-Mole</h1>
+    <p class="subtitle">Motion-Controlled Arcade Fun</p>
+    <button class="btn btn-primary" onclick="startSoloGame()">🎮 SOLO PLAY</button>
+    <button class="btn btn-primary" style="margin-top:.8rem;background:linear-gradient(135deg,#ff8c00,#ff5722)"
+      onclick="showLobby('create')">🌐 ONLINE MULTIPLAYER</button>
+    <button class="btn btn-secondary" style="margin-top:.5rem" onclick="showLobby('join')">🔗 JOIN ROOM</button>
+    <p style="color:rgba(255,255,255,.4);font-size:.75rem;margin-top:1rem">🖐 Webcam hand tracking enabled</p>
+  </div>
+
+  <!-- HUD (in-game) -->
+  <div id="hud" style="display:none">
+    <div class="hud-left" id="livesContainer"></div>
+    <div class="hud-right">
+      <div class="score-box">
+        <div class="score-val" id="scoreDisplay">0</div>
+      </div>
+      <button class="pause-btn" onclick="togglePause()">⏸</button>
+    </div>
+  </div>
+  <div id="tutorialBanner"></div>
+
+  <!-- BARREL HOLES (positioned absolutely) -->
+  <div id="barrelContainer" style="display:none"></div>
+
+  <!-- LOBBY SCREEN -->
+  <div class="screen hidden" id="lobbyScreen">
+    <div class="lobby-panel">
+      <h2 id="lobbyTitle">🌐 Online Match</h2>
+      <div id="lobbyCreate" style="display:none">
+        <p style="color:#a5d6a7">Share this code with your opponent:</p>
+        <div class="room-code" id="roomCodeDisplay">----</div>
+        <p class="lobby-status waiting" id="lobbyWait">Waiting for opponent...</p>
+        <button class="btn btn-secondary" style="margin-top:1rem" onclick="requestBot()">🤖 Play vs Bot</button>
+      </div>
+      <div id="lobbyJoin" style="display:none">
+        <p style="color:#a5d6a7;margin-bottom:1rem">Enter room code:</p>
+        <input class="room-input" id="joinCodeInput" placeholder="ABCD" maxlength="4">
+        <br>
+        <button class="btn btn-primary" style="margin-top:1rem" onclick="joinRoom()">JOIN →</button>
+        <p class="lobby-status" id="joinStatus"></p>
+      </div>
+      <button class="btn btn-secondary" style="margin-top:1.5rem" onclick="leaveLobby()">← BACK</button>
+    </div>
+  </div>
+
+  <!-- GAME OVER SCREEN -->
+  <div class="screen hidden" id="gameOverScreen">
+    <div class="go-panel">
+      <h2 id="goTitle">GAME OVER</h2>
+      <div class="final-score" id="finalScore">0</div>
+      <p style="color:#aaa" id="goSubtitle">Your Score</p>
+      <p style="color:#ff8c00;font-size:1.2rem;margin-top:.5rem" id="goOppScore"></p>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="retryGame()">🔄 PLAY AGAIN</button>
+        <button class="btn btn-secondary" onclick="goToMenu()">🏠 MAIN MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // WHACK-A-MOLE — AR GAME ENGINE (matches Unity version)
+    // ============================================================
+
+    const S = {
+      score: 0, lives: 3, maxLives: 3, gameActive: false, paused: false,
+      gameStartTime: 0, minSpawn: 1, maxSpawn: 3,
+      dangerChance: 0.2, maxDangerChance: 0.4, dangerWarningTime: 1.5,
+      diffInterval: 15, majorSpikeTime: 75, lastDiffTime: 0,
+      tutorialPhase: 0, holes: [], spawnTimer: null, playerMode: 1,
+      helmetHits: new Map(), processedHits: new Set(),
+      // Multiplayer
+      mpMode: false, myRole: null, ws: null, oppScore: 0, oppLives: 3,
+      handSendInterval: null
+    };
+
+    // ===== AUDIO =====
+    let audioCtx;
+    function initAudio() { audioCtx = new (window.AudioContext || window.webkitAudioContext)() }
+    function tone(f, d, t = 'sine', v = .3) { if (!audioCtx) initAudio(); const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = t; o.frequency.value = f; g.gain.setValueAtTime(v, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(.001, audioCtx.currentTime + d); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + d) }
+    function sfxWhack() { tone(800, .12, 'square', .2); tone(400, .08, 'sawtooth', .15) }
+    function sfxHelmet() { tone(200, .15, 'sawtooth', .3); tone(150, .1, 'square', .2) }
+    function sfxDanger() { tone(100, .3, 'sawtooth', .4); tone(80, .4, 'square', .25) }
+    function sfxHeart() { tone(1200, .15, 'sine', .2); setTimeout(() => tone(1500, .2, 'sine', .2), 100) }
+    function sfxGameOver() { tone(300, .3, 'sawtooth', .3); setTimeout(() => tone(200, .5, 'sawtooth', .3), 200) }
+    let bgm = null;
+    function startBgm() { if (!audioCtx) initAudio(); if (bgm) return; const n = [261, 329, 392, 523, 392, 329, 261, 196]; let i = 0; bgm = setInterval(() => { tone(n[i % n.length], .3, 'sine', .05); i++ }, 500) }
+    function stopBgm() { if (bgm) { clearInterval(bgm); bgm = null } }
+
+    // ===== SVG MOLE SPRITES =====
+    function moleSVG(type) {
+      const w = 140, h = 140;
+      let s = '';
+      if (type === 'normal') {
+        s = `<circle cx="70" cy="85" r="50" fill="#8B5E3C"/><circle cx="70" cy="90" r="40" fill="#A67B5B"/>
+    <circle cx="52" cy="75" r="9" fill="white"/><circle cx="88" cy="75" r="9" fill="white"/>
+    <circle cx="55" cy="75" r="5" fill="#2d1810"/><circle cx="91" cy="75" r="5" fill="#2d1810"/>
+    <ellipse cx="70" cy="95" rx="12" ry="9" fill="#D4956B"/><circle cx="70" cy="92" r="6" fill="#FF8FAB"/>
+    <ellipse cx="70" cy="105" rx="18" ry="5" fill="#6d4c2e"/>
+    <circle cx="58" cy="68" r="3" fill="#FF8FAB" opacity=".5"/><circle cx="82" cy="68" r="3" fill="#FF8FAB" opacity=".5"/>`;
+      } else if (type === 'helmet') {
+        s = `<circle cx="70" cy="85" r="50" fill="#8B5E3C"/><circle cx="70" cy="90" r="40" fill="#A67B5B"/>
+    <circle cx="52" cy="82" r="9" fill="white"/><circle cx="88" cy="82" r="9" fill="white"/>
+    <circle cx="55" cy="82" r="5" fill="#2d1810"/><circle cx="91" cy="82" r="5" fill="#2d1810"/>
+    <ellipse cx="70" cy="100" rx="12" ry="8" fill="#D4956B"/><circle cx="70" cy="97" r="5" fill="#FF8FAB"/>
+    <path d="M25,68 Q70,10 115,68 L108,74 Q70,22 32,74 Z" fill="#F9A825" stroke="#F57F17" stroke-width="2"/>
+    <circle cx="70" cy="28" r="8" fill="#FFD54F" stroke="#F57F17" stroke-width="2"/>
+    <rect x="66" y="20" width="8" height="12" rx="2" fill="#FFD54F"/>`;
+      } else if (type === 'helmet_damaged') {
+        s = `<circle cx="70" cy="85" r="50" fill="#8B5E3C"/><circle cx="70" cy="90" r="40" fill="#A67B5B"/>
+    <circle cx="52" cy="82" r="9" fill="white"/><circle cx="88" cy="82" r="9" fill="white"/>
+    <circle cx="55" cy="82" r="5" fill="#2d1810"/><circle cx="91" cy="82" r="5" fill="#2d1810"/>
+    <path d="M25,68 Q70,10 115,68 L108,74 Q70,22 32,74 Z" fill="#E8971F" stroke="#BF6C0A" stroke-width="2"/>
+    <line x1="50" y1="40" x2="80" y2="65" stroke="#5d3a0a" stroke-width="3"/>
+    <line x1="40" y1="55" x2="65" y2="45" stroke="#5d3a0a" stroke-width="2"/>
+    <circle cx="70" cy="28" r="8" fill="#D4A030" stroke="#9e7020" stroke-width="2"/>
+    <text x="70" y="82" text-anchor="middle" font-size="14" fill="#FFD700">★</text>`;
+      } else if (type === 'danger') {
+        s = `<circle cx="70" cy="85" r="50" fill="#B71C1C"/><circle cx="70" cy="90" r="40" fill="#E53935"/>
+    <circle cx="48" cy="72" r="10" fill="white"/><circle cx="92" cy="72" r="10" fill="white"/>
+    <circle cx="51" cy="71" r="6" fill="#1a1a1a"/><circle cx="95" cy="71" r="6" fill="#1a1a1a"/>
+    <line x1="35" y1="60" x2="55" y2="67" stroke="#7f0000" stroke-width="4" stroke-linecap="round"/>
+    <line x1="105" y1="60" x2="85" y2="67" stroke="#7f0000" stroke-width="4" stroke-linecap="round"/>
+    <path d="M45,100 Q57,88 70,100 Q83,88 95,100" stroke="#7f0000" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <text x="70" y="50" text-anchor="middle" font-size="22" fill="#FFD700" font-weight="bold">⚠</text>`;
+      } else if (type === 'heart') {
+        s = `<path d="M70,120 C25,90 10,55 40,35 C55,25 70,40 70,40 C70,40 85,25 100,35 C130,55 115,90 70,120Z" fill="#FF2D55" stroke="#C2185B" stroke-width="2"/>
+    <path d="M48,50 Q58,38 68,50" fill="rgba(255,255,255,.4)"/>
+    <text x="70" y="82" text-anchor="middle" font-size="20" fill="white" font-weight="bold">+</text>`;
+      }
+      return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${s}</svg>`)}`;
+    }
+    const MOLE_IMG = {};
+    ['normal', 'helmet', 'helmet_damaged', 'danger', 'heart'].forEach(t => { const i = new Image(); i.src = moleSVG(t); MOLE_IMG[t] = i });
+
+    // Heart SVG
+    const heartSrc = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z" fill="#FF1744"/></svg>')}`;
+
+    // ===== FOREST BORDER (draw with Canvas) =====
+    function drawForestBorder() {
+      const c = document.getElementById('borderCanvas');
+      const W = window.innerWidth, H = window.innerHeight;
+      c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const bw = Math.min(W * .1, 120); // border width
+
+      // Left trees
+      const gL = ctx.createLinearGradient(0, 0, bw, 0);
+      gL.addColorStop(0, '#2e7d32'); gL.addColorStop(.6, '#43a047'); gL.addColorStop(1, 'rgba(67,160,71,0)');
+      ctx.fillStyle = gL; ctx.fillRect(0, 0, bw * 1.3, H);
+
+      // Right trees
+      const gR = ctx.createLinearGradient(W, 0, W - bw, 0);
+      gR.addColorStop(0, '#2e7d32'); gR.addColorStop(.6, '#43a047'); gR.addColorStop(1, 'rgba(67,160,71,0)');
+      ctx.fillStyle = gR; ctx.fillRect(W - bw * 1.3, 0, bw * 1.3, H);
+
+      // Bottom grass
+      const gB = ctx.createLinearGradient(0, H, 0, H - 60);
+      gB.addColorStop(0, '#33691e'); gB.addColorStop(.5, '#558b2f'); gB.addColorStop(1, 'rgba(85,139,47,0)');
+      ctx.fillStyle = gB; ctx.fillRect(0, H - 60, W, 60);
+
+      // Tree circles (bushes/foliage)
+      ctx.fillStyle = '#388e3c';
+      const bushPositions = [
+        [bw * .4, H * .15, bw * .7], [bw * .3, H * .4, bw * .5], [bw * .5, H * .65, bw * .6], [bw * .3, H * .85, bw * .5],
+        [W - bw * .4, H * .15, bw * .7], [W - bw * .3, H * .4, bw * .5], [W - bw * .5, H * .65, bw * .6], [W - bw * .3, H * .85, bw * .5],
+        [bw * .6, H * .3, bw * .4], [W - bw * .6, H * .3, bw * .4]
+      ];
+      bushPositions.forEach(([x, y, r]) => {
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.fillStyle = '#4caf50';
+      bushPositions.forEach(([x, y, r]) => {
+        ctx.beginPath(); ctx.arc(x + r * .2, y - r * .2, r * .6, 0, Math.PI * 2); ctx.fill();
+      });
+      // Lighter leaf highlights
+      ctx.fillStyle = '#66bb6a';
+      bushPositions.forEach(([x, y, r]) => {
+        ctx.beginPath(); ctx.arc(x - r * .1, y - r * .3, r * .3, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+    window.addEventListener('resize', () => { drawForestBorder(); positionBarrels() });
+
+    // ===== BARREL POSITIONS (around edges, matching Unity layout) =====
+    // [xPercent, yPercent, rotationDeg] — 7 barrels
+    const BARREL_POS = [
+      [0.08, 0.28, 8], [0.08, 0.62, 8],     // left side (slight tilt right)
+      [0.92, 0.28, -8], [0.92, 0.62, -8],     // right side (slight tilt left)
+      [0.25, 0.82, 0], [0.50, 0.85, 0], [0.75, 0.82, 0]  // bottom row (straight)
+    ];
+
+    function barrelSVG() {
+      return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
+    <ellipse cx="60" cy="70" rx="55" ry="18" fill="#2d1a0a"/>
+    <rect x="10" y="20" width="100" height="50" rx="8" fill="#6d4226"/>
+    <rect x="10" y="20" width="100" height="50" rx="8" fill="url(#bwood)"/>
+    <ellipse cx="60" cy="20" rx="50" ry="15" fill="#3e2414"/>
+    <ellipse cx="60" cy="20" rx="45" ry="12" fill="#1a0e05"/>
+    <rect x="15" y="30" width="90" height="6" rx="2" fill="#5c3a1e" opacity=".6"/>
+    <rect x="15" y="50" width="90" height="6" rx="2" fill="#5c3a1e" opacity=".6"/>
+    <defs><linearGradient id="bwood" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="rgba(255,255,255,.08)"/><stop offset=".5" stop-color="rgba(255,255,255,.02)"/>
+      <stop offset="1" stop-color="rgba(0,0,0,.1)"/></linearGradient></defs>
+  </svg>`)}`;
+    }
+    const barrelImgSrc = barrelSVG();
+
+    function positionBarrels() {
+      const cont = document.getElementById('barrelContainer');
+      if (!cont || S.holes.length === 0) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      BARREL_POS.forEach((pos, i) => {
+        if (i >= S.holes.length) return;
+        const el = S.holes[i].barrelEl;
+        const bw = el.offsetWidth, bh = el.offsetHeight;
+        el.style.left = (pos[0] * W - bw / 2) + 'px';
+        el.style.top = (pos[1] * H - bh / 2) + 'px';
+        el.style.transform = `rotate(${pos[2]}deg)`;
+      });
+    }
+
+    function buildBarrels() {
+      const cont = document.getElementById('barrelContainer');
+      cont.innerHTML = ''; cont.style.display = 'block';
+      S.holes = [];
+      const count = BARREL_POS.length;
+      for (let i = 0; i < count; i++) {
+        const barrel = document.createElement('div');
+        barrel.className = 'barrel'; barrel.id = `barrel${i}`;
+
+        const slot = document.createElement('div');
+        slot.className = 'mole-slot';
+
+        const mole = document.createElement('img');
+        mole.className = 'mole-sprite'; mole.id = `mole${i}`;
+        mole.src = MOLE_IMG.normal.src;
+        slot.appendChild(mole);
+
+        const bimg = document.createElement('img');
+        bimg.className = 'barrel-img'; bimg.src = barrelImgSrc;
+
+        barrel.appendChild(slot);
+        barrel.appendChild(bimg);
+        cont.appendChild(barrel);
+
+        S.holes.push({ barrelEl: barrel, moleEl: mole, occupied: false, type: null, timeout: null });
+        barrel.addEventListener('pointerdown', (e) => { e.preventDefault(); whackHole(i) });
+      }
+      positionBarrels();
+    }
+
+    // ===== HUD =====
+    function buildHUD() {
+      const lc = document.getElementById('livesContainer');
+      lc.innerHTML = '';
+      for (let i = 0; i < S.maxLives; i++) {
+        const h = document.createElement('img');
+        h.src = heartSrc; h.className = 'hud-heart'; h.id = `hl${i}`;
+        lc.appendChild(h);
+      }
+      document.getElementById('scoreDisplay').textContent = '0';
+      document.getElementById('hud').style.display = 'flex';
+    }
+    function updateScore(a) { S.score += a; document.getElementById('scoreDisplay').textContent = S.score }
+    function updateLives() { for (let i = 0; i < S.maxLives; i++) { document.getElementById(`hl${i}`).classList.toggle('lost', i >= S.lives) } }
+
+    // ===== SHOW/HIDE MOLES =====
+    function showMole(idx, type) {
+      const h = S.holes[idx]; if (!h || h.occupied) return;
+      h.occupied = true; h.type = type;
+      h.moleEl.src = MOLE_IMG[type].src;
+      h.moleEl.classList.remove('hit-anim');
+      requestAnimationFrame(() => h.moleEl.classList.add('visible'));
+      const dur = type === 'danger' ? 2500 : (type === 'heart' ? 3000 : (1500 + Math.random() * 1500));
+      h.timeout = setTimeout(() => { if (h.occupied && h.type === type) hideMole(idx) }, dur);
+    }
+    function hideMole(idx, fast) {
+      const h = S.holes[idx]; if (!h || !h.occupied) return;
+      h.moleEl.classList.remove('visible');
+      if (h.timeout) { clearTimeout(h.timeout); h.timeout = null }
+      setTimeout(() => { h.occupied = false; h.type = null; S.helmetHits.delete(idx) }, fast ? 50 : 200);
+    }
+    function spawnDanger() {
+      const empties = S.holes.map((h, i) => h.occupied ? -1 : i).filter(i => i >= 0);
+      if (!empties.length) return;
+      const idx = empties[Math.floor(Math.random() * empties.length)];
+      const h = S.holes[idx]; h.occupied = true; h.type = 'warning';
+      // Show warning emoji temporarily
+      h.moleEl.src = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="70" text-anchor="middle" font-size="60">⚠️</text></svg>')}`;
+      h.moleEl.classList.add('visible');
+      h.timeout = setTimeout(() => {
+        if (!S.gameActive) return;
+        h.moleEl.classList.remove('visible');
+        setTimeout(() => { h.occupied = false; h.type = null; showMole(idx, 'danger') }, 150);
+      }, S.dangerWarningTime * 1000);
+    }
+
+    // ===== WHACK =====
+    function whackHole(idx) {
+      if (!S.gameActive || S.paused) return;
+      const h = S.holes[idx];
+      if (!h || !h.occupied || h.type === 'warning') return;
+      if (S.processedHits.has(idx)) return;
+
+      // In multiplayer, just send to server
+      if (S.mpMode && S.ws) {
+        S.ws.send(JSON.stringify({ type: 'whack', index: idx }));
+        S.processedHits.add(idx);
+        setTimeout(() => S.processedHits.delete(idx), 400);
+        return;
+      }
+
+      // Solo mode — local handling
+      const type = h.type;
+      const rect = h.barrelEl.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height * .3;
+
+      if (type === 'normal') {
+        S.processedHits.add(idx); sfxWhack();
+        burstStars(cx, cy, '#ffd700'); scorePopup(cx, cy, '+10', 'plus');
+        h.moleEl.classList.add('hit-anim'); updateScore(10);
+        setTimeout(() => hideMole(idx, true), 300);
+        setTimeout(() => S.processedHits.delete(idx), 400);
+      } else if (type === 'helmet') {
+        const hits = (S.helmetHits.get(idx) || 0) + 1; S.helmetHits.set(idx, hits);
+        if (hits === 1) {
+          sfxHelmet(); burstStars(cx, cy, '#aaa'); scorePopup(cx, cy, '+10', 'plus'); updateScore(10);
+          h.moleEl.src = MOLE_IMG.helmet_damaged.src;
+          h.moleEl.classList.add('hit-anim');
+          setTimeout(() => h.moleEl.classList.remove('hit-anim'), 400);
+        } else {
+          S.processedHits.add(idx); sfxWhack();
+          burstStars(cx, cy, '#ffd700'); scorePopup(cx, cy, '+20', 'plus'); updateScore(20);
+          h.moleEl.classList.add('hit-anim');
+          setTimeout(() => hideMole(idx, true), 300);
+          setTimeout(() => S.processedHits.delete(idx), 400);
+        }
+      } else if (type === 'danger') {
+        S.processedHits.add(idx); sfxDanger();
+        burstStars(cx, cy, '#ff3b30'); flashScreen(); loseLife();
+        setTimeout(() => hideMole(idx, true), 200);
+        setTimeout(() => S.processedHits.delete(idx), 400);
+      } else if (type === 'heart') {
+        S.processedHits.add(idx); sfxHeart();
+        burstStars(cx, cy, '#ff2d55');
+        if (S.lives < S.maxLives) { S.lives++; updateLives(); scorePopup(cx, cy, '❤️+1', 'plus') }
+        setTimeout(() => hideMole(idx, true), 200);
+        setTimeout(() => S.processedHits.delete(idx), 400);
+      }
+    }
+    function loseLife() { S.lives--; updateLives(); if (S.lives <= 0) gameOver() }
+    function flashScreen() { const f = document.getElementById('flashOverlay'); f.style.opacity = '1'; setTimeout(() => f.style.opacity = '0', 150) }
+
+    // ===== EFFECTS =====
+    function burstStars(x, y, color) {
+      for (let i = 0; i < 10; i++) {
+        const s = document.createElement('div');
+        s.className = 'star-particle'; s.textContent = '★';
+        s.style.cssText = `left:${x}px;top:${y}px;color:${color};font-size:${12 + Math.random() * 16}px;` +
+          `--dx:${(Math.random() - .5) * 100}px;--dy:${(Math.random() - .5) * 100}px`;
+        document.body.appendChild(s);
+        setTimeout(() => s.remove(), 600);
+      }
+    }
+    function scorePopup(x, y, text, cls) {
+      const p = document.createElement('div');
+      p.className = `score-popup ${cls}`; p.textContent = text;
+      p.style.left = x + 'px'; p.style.top = y + 'px';
+      document.body.appendChild(p); setTimeout(() => p.remove(), 1000);
+    }
+
+    // ===== GAME FLOW =====
+    function showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden')); const el = document.getElementById(id); if (el) el.classList.remove('hidden'); }
+
+    function startSoloGame() { S.mpMode = false; startGame(); }
+
+    function startGame() {
+      if (!audioCtx) initAudio();
+      S.score = 0; S.lives = 3; S.gameActive = true; S.paused = false;
+      S.minSpawn = 1; S.maxSpawn = 3; S.dangerChance = 0.2; S.dangerWarningTime = 1.5;
+      S.tutorialPhase = 0; S.gameStartTime = Date.now(); S.lastDiffTime = Date.now();
+      S.helmetHits.clear(); S.processedHits.clear();
+
+      // Hide all screens (menu, game over) to show gameplay
+      document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
+      drawForestBorder();
+      buildHUD(); buildBarrels(); updateLives();
+      startBgm();
+      initMediaPipe();
+
+      if (S.mpMode) {
+        document.getElementById('dualScores').style.display = 'flex';
+        document.getElementById('myScoreMP').textContent = '0';
+        document.getElementById('oppScoreMP').textContent = '0';
+        document.getElementById('connDot').style.display = 'block';
+        startHandSync();
+      } else {
+        document.getElementById('dualScores').style.display = 'none';
+        document.getElementById('connDot').style.display = 'none';
+        const b = document.getElementById('tutorialBanner');
+        b.textContent = '🎯 Tutorial: Whack the normal moles!'; b.style.opacity = '1';
+        runTutorial();
+      }
+    }
+
+    function runTutorial() {
+      S.tutorialPhase = 0; scheduleSpawn();
+      setTimeout(() => { if (!S.gameActive) return; S.tutorialPhase = 1; document.getElementById('tutorialBanner').textContent = '🛡️ Helmet moles need 2 hits!' }, 10000);
+      setTimeout(() => { if (!S.gameActive) return; S.tutorialPhase = 2; const b = document.getElementById('tutorialBanner'); b.textContent = '⚠️ Watch out for danger moles!'; setTimeout(() => b.style.opacity = '0', 3000) }, 25000);
+    }
+
+    function scheduleSpawn() {
+      if (!S.gameActive || S.paused) return;
+      const d = (S.minSpawn + Math.random() * (S.maxSpawn - S.minSpawn)) * 1000;
+      S.spawnTimer = setTimeout(() => { if (!S.gameActive) return; doSpawn(); updateDiff(); scheduleSpawn() }, d);
+    }
+
+    function doSpawn() {
+      const empties = S.holes.filter(h => !h.occupied);
+      if (!empties.length) return;
+      const idx = S.holes.indexOf(empties[Math.floor(Math.random() * empties.length)]);
+      const r = Math.random();
+      if (S.tutorialPhase === 0) { showMole(idx, 'normal') }
+      else if (S.tutorialPhase === 1) { showMole(idx, r < .5 ? 'normal' : 'helmet') }
+      else {
+        if (r < .1 && S.lives < S.maxLives) showMole(idx, 'heart');
+        else if (r < S.dangerChance) spawnDanger();
+        else showMole(idx, r < .55 ? 'normal' : 'helmet');
+      }
+    }
+
+    function updateDiff() {
+      const el = (Date.now() - S.gameStartTime) / 1000;
+      if ((Date.now() - S.lastDiffTime) / 1000 >= S.diffInterval) {
+        S.lastDiffTime = Date.now();
+        S.minSpawn = Math.max(.5, S.minSpawn - .1); S.maxSpawn = Math.max(1, S.maxSpawn - .15);
+        if (S.maxSpawn < S.minSpawn + .1) S.maxSpawn = S.minSpawn + .1;
+        S.dangerWarningTime = Math.max(.7, S.dangerWarningTime - .1);
+        S.dangerChance = Math.min(S.maxDangerChance, S.dangerChance + .02);
+      }
+      if (el >= S.majorSpikeTime && S.maxSpawn > 1.5) {
+        S.minSpawn = Math.max(.4, S.minSpawn - .3); S.maxSpawn = Math.max(1.2, S.maxSpawn - .4);
+        S.dangerChance = S.maxDangerChance; S.dangerWarningTime = Math.max(.8, S.dangerWarningTime - .3);
+      }
+    }
+
+    function togglePause() {
+      S.paused = !S.paused;
+      document.querySelector('.pause-btn').textContent = S.paused ? '▶' : '⏸';
+      if (!S.paused) scheduleSpawn();
+    }
+
+    function gameOver() {
+      S.gameActive = false; stopBgm(); sfxGameOver();
+      if (S.spawnTimer) clearTimeout(S.spawnTimer);
+      if (S.handSendInterval) { clearInterval(S.handSendInterval); S.handSendInterval = null; }
+      S.holes.forEach(h => { if (h.timeout) clearTimeout(h.timeout) });
+      document.getElementById('finalScore').textContent = S.score;
+      document.getElementById('hud').style.display = 'none';
+      document.getElementById('barrelContainer').style.display = 'none';
+      document.getElementById('tutorialBanner').style.opacity = '0';
+      document.getElementById('dualScores').style.display = 'none';
+      document.getElementById('connDot').style.display = 'none';
+      // Hide opponent hands
+      const og = document.getElementById('oppGlow1'), oc = document.getElementById('oppCore1');
+      if (og) og.style.display = 'none'; if (oc) oc.style.display = 'none';
+      if (S.mpMode) {
+        const iWon = S.score >= S.oppScore;
+        document.getElementById('goTitle').textContent = iWon ? '🏆 YOU WIN!' : '😢 YOU LOSE';
+        document.getElementById('goTitle').style.color = iWon ? '#ffd700' : '#ff5252';
+        document.getElementById('goSubtitle').textContent = 'Your Score';
+        document.getElementById('goOppScore').textContent = `Opponent: ${S.oppScore}`;
+      } else {
+        document.getElementById('goTitle').textContent = 'GAME OVER';
+        document.getElementById('goTitle').style.color = '#ff5252';
+        document.getElementById('goSubtitle').textContent = 'Your Score';
+        document.getElementById('goOppScore').textContent = '';
+      }
+      setTimeout(() => showScreen('gameOverScreen'), 600);
+    }
+    function retryGame() {
+      if (S.mpMode && S.ws) { S.ws.close(); S.ws = null; }
+      S.mpMode = false; startGame();
+    }
+    function goToMenu() {
+      stopBgm();
+      if (S.ws) { S.ws.close(); S.ws = null; }
+      S.mpMode = false;
+      document.getElementById('hud').style.display = 'none';
+      document.getElementById('barrelContainer').style.display = 'none';
+      document.getElementById('dualScores').style.display = 'none';
+      document.getElementById('connDot').style.display = 'none';
+      showScreen('menuScreen');
+    }
+
+    // ===== WEBCAM BACKGROUND =====
+    let webcamReady = false;
+    async function startWebcamBg() {
+      try {
+        const v = document.getElementById('bgVideo');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+        });
+        v.srcObject = stream;
+        await v.play();
+        webcamReady = true;
+        // Show webcam background
+        document.getElementById('webcamBg').classList.add('active');
+        console.log('Webcam started successfully');
+      } catch (e) {
+        console.warn('Webcam not available:', e.message);
+        webcamReady = false;
+      }
+    }
+
+    // ===== MEDIAPIPE POSE (full body tracking) =====
+    let poseInst = null, handCooldown = false;
+    let leftCooldown = false, rightCooldown = false;
+    async function initMediaPipe() {
+      if (typeof window.Pose === 'undefined') { console.warn('MediaPipe Pose not loaded'); return }
+      if (poseInst) return;
+      if (!webcamReady) { console.warn('Webcam not ready, pose tracking disabled'); return }
+      try {
+        const v = document.getElementById('bgVideo');
+        poseInst = new window.Pose({
+          locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}`
+        });
+        poseInst.setOptions({
+          modelComplexity: 0,
+          smoothLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        poseInst.onResults(onPoseResults);
+
+        // Feed frames
+        async function feedFrame() {
+          if (!poseInst) { requestAnimationFrame(feedFrame); return; }
+          try {
+            if (v.readyState >= 2 && S.gameActive) await poseInst.send({ image: v });
+          } catch (e) { /* skip */ }
+          requestAnimationFrame(feedFrame);
+        }
+        requestAnimationFrame(feedFrame);
+        console.log('MediaPipe Pose initialized for full body tracking!');
+      } catch (e) { console.warn('MediaPipe Pose failed:', e.message) }
+    }
+
+    function onPoseResults(res) {
+      const glowL = document.getElementById('handGlowL'), coreL = document.getElementById('handCoreL');
+      const glowR = document.getElementById('handGlowR'), coreR = document.getElementById('handCoreR');
+
+      if (!res.poseLandmarks) {
+        glowL.style.display = glowR.style.display = coreL.style.display = coreR.style.display = 'none';
+        return;
+      }
+
+      const lm = res.poseLandmarks;
+      // Pose landmarks: 15 = left wrist, 16 = right wrist
+      // Note: pose coordinates are NOT mirrored, but our video is mirrored via CSS scaleX(-1)
+      // So we need to mirror X: (1 - x)
+      const wrists = [
+        { lm: lm[16], glow: glowL, core: coreL, side: 'L' },
+        { lm: lm[15], glow: glowR, core: coreR, side: 'R' }
+      ];
+
+      // Store positions for multiplayer hand sync
+      lastHandPositions = [];
+      wrists.forEach(({ lm: w }) => {
+        if (w && w.visibility >= 0.5) lastHandPositions.push({ x: 1 - w.x, y: w.y });
+      });
+
+      wrists.forEach(({ lm: w, glow, core, side }) => {
+        if (!w || w.visibility < 0.5) {
+          glow.style.display = 'none';
+          core.style.display = 'none';
+          return;
+        }
+
+        const hx = (1 - w.x) * window.innerWidth;
+        const hy = w.y * window.innerHeight;
+
+        glow.style.display = 'block';
+        glow.style.left = hx + 'px';
+        glow.style.top = hy + 'px';
+        core.style.display = 'block';
+        core.style.left = hx + 'px';
+        core.style.top = hy + 'px';
+
+        // Check overlap with barrels for hit detection
+        const isCooling = side === 'L' ? leftCooldown : rightCooldown;
+        if (!isCooling && S.gameActive && !S.paused) {
+          S.holes.forEach((hole, i) => {
+            if (!hole.occupied || hole.type === 'warning') return;
+            const r = hole.barrelEl.getBoundingClientRect();
+            if (hx > r.left && hx < r.right && hy > r.top && hy < r.bottom) {
+              whackHole(i);
+              if (side === 'L') { leftCooldown = true; setTimeout(() => { leftCooldown = false }, 400); }
+              else { rightCooldown = true; setTimeout(() => { rightCooldown = false }, 400); }
+            }
+          });
+        }
+      });
+    }
+
+    // ===== WEBSOCKET MULTIPLAYER =====
+    let lastHandPositions = [];
+
+    function getWsUrl() {
+      const loc = window.location;
+      const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${proto}//${loc.host}`;
+    }
+
+    function connectWS(onOpen) {
+      S.ws = new WebSocket(getWsUrl());
+      S.ws.onopen = () => {
+        console.log('WebSocket connected');
+        document.getElementById('connDot').style.display = 'block';
+        document.getElementById('connDot').classList.remove('disconnected');
+        if (onOpen) onOpen();
+      };
+      S.ws.onclose = () => {
+        console.log('WebSocket closed');
+        document.getElementById('connDot').classList.add('disconnected');
+      };
+      S.ws.onmessage = (e) => handleServerMsg(JSON.parse(e.data));
+    }
+
+    function handleServerMsg(msg) {
+      switch (msg.type) {
+        case 'room_created':
+          document.getElementById('roomCodeDisplay').textContent = msg.code;
+          break;
+        case 'room_joined':
+          document.getElementById('joinStatus').textContent = 'Joined! Starting soon...';
+          document.getElementById('joinStatus').className = 'lobby-status';
+          break;
+        case 'opponent_joined':
+          document.getElementById('lobbyWait').textContent = 'Opponent connected! Starting...';
+          document.getElementById('lobbyWait').classList.remove('waiting');
+          break;
+        case 'bot_activated':
+          document.getElementById('lobbyWait').textContent = 'Bot ready! Starting...';
+          document.getElementById('lobbyWait').classList.remove('waiting');
+          break;
+        case 'game_start':
+          S.mpMode = true;
+          S.myRole = msg.role;
+          S.oppScore = 0; S.oppLives = 3;
+          startGame();
+          break;
+        case 'spawn_mole':
+          if (S.gameActive) showMole(msg.index, msg.moleType);
+          break;
+        case 'hide_mole': {
+          if (!S.gameActive) break;
+          const h = S.holes[msg.index];
+          if (h && h.occupied) {
+            if (msg.whacker && msg.whacker !== S.myRole) {
+              // Opponent whacked it — show visual feedback
+              const rect = h.barrelEl.getBoundingClientRect();
+              const cx = rect.left + rect.width / 2, cy = rect.top + rect.height * .3;
+              burstStars(cx, cy, '#ff8c00');
+            }
+            hideMole(msg.index, true);
+          }
+          break;
+        }
+        case 'helmet_damaged': {
+          const h = S.holes[msg.index];
+          if (h && h.occupied) {
+            h.moleEl.src = MOLE_IMG.helmet_damaged.src;
+            h.moleEl.classList.add('hit-anim');
+            setTimeout(() => h.moleEl.classList.remove('hit-anim'), 400);
+          }
+          break;
+        }
+        case 'score_update': {
+          const myScore = msg.scores[S.myRole];
+          const oppRole = S.myRole === 'host' ? 'guest' : 'host';
+          const oppScore = msg.scores[oppRole];
+          S.score = myScore; S.oppScore = oppScore;
+          document.getElementById('scoreDisplay').textContent = myScore;
+          document.getElementById('myScoreMP').textContent = myScore;
+          document.getElementById('oppScoreMP').textContent = oppScore;
+          // Show popup for whacker
+          if (msg.whacker === S.myRole && msg.holeIndex != null) {
+            const h = S.holes[msg.holeIndex];
+            if (h) {
+              const rect = h.barrelEl.getBoundingClientRect();
+              const cx = rect.left + rect.width / 2, cy = rect.top + rect.height * .3;
+              burstStars(cx, cy, '#ffd700');
+              scorePopup(cx, cy, `+${msg.points}`, 'plus');
+              if (msg.moleType === 'normal') sfxWhack();
+              else if (msg.moleType === 'helmet') sfxHelmet();
+            }
+          }
+          break;
+        }
+        case 'life_lost': {
+          const oppRole = S.myRole === 'host' ? 'guest' : 'host';
+          if (msg.role === S.myRole) {
+            S.lives = msg.lives[S.myRole];
+            updateLives(); flashScreen();
+            sfxDanger();
+          }
+          S.oppLives = msg.lives[oppRole];
+          break;
+        }
+        case 'life_gained':
+          if (msg.role === S.myRole) {
+            S.lives = msg.lives[S.myRole];
+            updateLives(); sfxHeart();
+          }
+          break;
+        case 'opponent_hands':
+          renderOpponentHands(msg.positions);
+          break;
+        case 'game_over':
+          S.score = msg.scores[S.myRole];
+          const oppR = S.myRole === 'host' ? 'guest' : 'host';
+          S.oppScore = msg.scores[oppR];
+          gameOver();
+          break;
+        case 'opponent_disconnected':
+          if (S.gameActive) gameOver();
+          break;
+        case 'error':
+          const js = document.getElementById('joinStatus');
+          if (js) { js.textContent = msg.message; js.className = 'lobby-status error'; }
+          break;
+      }
+    }
+
+    function renderOpponentHands(positions) {
+      const g = document.getElementById('oppGlow1'), c = document.getElementById('oppCore1');
+      if (!positions || !positions.length) { g.style.display = 'none'; c.style.display = 'none'; return; }
+      const p = positions[0];
+      const x = p.x * window.innerWidth, y = p.y * window.innerHeight;
+      g.style.display = 'block'; g.style.left = x + 'px'; g.style.top = y + 'px';
+      c.style.display = 'block'; c.style.left = x + 'px'; c.style.top = y + 'px';
+    }
+
+    function startHandSync() {
+      if (S.handSendInterval) clearInterval(S.handSendInterval);
+      S.handSendInterval = setInterval(() => {
+        if (!S.ws || !S.gameActive || !lastHandPositions.length) return;
+        S.ws.send(JSON.stringify({ type: 'hand_pos', positions: lastHandPositions }));
+      }, 66); // ~15fps
+    }
+
+    // ===== LOBBY FUNCTIONS =====
+    function showLobby(mode) {
+      showScreen('lobbyScreen');
+      document.getElementById('lobbyCreate').style.display = mode === 'create' ? 'block' : 'none';
+      document.getElementById('lobbyJoin').style.display = mode === 'join' ? 'block' : 'none';
+      document.getElementById('lobbyTitle').textContent = mode === 'create' ? '\ud83c\udf10 Create Room' : '\ud83d\udd17 Join Room';
+      document.getElementById('roomCodeDisplay').textContent = '----';
+      document.getElementById('lobbyWait').textContent = 'Waiting for opponent...';
+      document.getElementById('lobbyWait').classList.add('waiting');
+      document.getElementById('joinStatus').textContent = '';
+
+      if (mode === 'create') {
+        connectWS(() => { S.ws.send(JSON.stringify({ type: 'create_room' })); });
+      }
+    }
+
+    function joinRoom() {
+      const code = document.getElementById('joinCodeInput').value.trim().toUpperCase();
+      if (code.length !== 4) {
+        document.getElementById('joinStatus').textContent = 'Enter a 4-character code';
+        document.getElementById('joinStatus').className = 'lobby-status error';
+        return;
+      }
+      connectWS(() => { S.ws.send(JSON.stringify({ type: 'join_room', code })); });
+    }
+
+    function requestBot() {
+      if (S.ws) S.ws.send(JSON.stringify({ type: 'start_bot' }));
+    }
+
+    function leaveLobby() {
+      if (S.ws) { S.ws.close(); S.ws = null; }
+      showScreen('menuScreen');
+    }
+
+    // ===== INIT =====
+    document.addEventListener('DOMContentLoaded', () => {
+      showScreen('menuScreen');
+      drawForestBorder();
+      startWebcamBg();
+    });
+  </script>
+</body>
+
+</html>
