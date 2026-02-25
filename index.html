@@ -1503,10 +1503,13 @@
     }
 
     // ===== WEBRTC VIDEO FEED (New) =====
+    let iceCandidatesQueue = [];
+
     async function initWebRTC(isHost) {
       if (S.pc) return;
       const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       S.pc = new RTCPeerConnection(config);
+      iceCandidatesQueue = [];
 
       // Add local stream
       if (S.localStream) {
@@ -1515,10 +1518,14 @@
 
       // Handle remote stream
       S.pc.ontrack = (event) => {
+        console.log('WebRTC: Received remote track');
         const remoteVideo = document.getElementById('remoteVideo');
         const container = document.getElementById('remoteVideoContainer');
-        remoteVideo.srcObject = event.streams[0];
-        container.style.display = 'block';
+        if (event.streams && event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+          container.style.display = 'block';
+          remoteVideo.play().catch(e => console.warn('Remote video play failed:', e));
+        }
       };
 
       // Handle ICE candidates
@@ -1543,12 +1550,27 @@
         const answer = await S.pc.createAnswer();
         await S.pc.setLocalDescription(answer);
         S.ws.send(JSON.stringify({ type: 'signal', data: { answer } }));
+        processQueuedCandidates();
       } else if (data.answer) {
         await S.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        processQueuedCandidates();
       } else if (data.candidate) {
+        if (S.pc.remoteDescription && S.pc.remoteDescription.type) {
+          try {
+            await S.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch (e) { console.warn('ICE candidate error:', e); }
+        } else {
+          iceCandidatesQueue.push(data.candidate);
+        }
+      }
+    }
+
+    async function processQueuedCandidates() {
+      while (iceCandidatesQueue.length > 0) {
+        const candidate = iceCandidatesQueue.shift();
         try {
-          await S.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) { console.warn('ICE candidate error:', e); }
+          await S.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) { console.warn('Queued ICE candidate error:', e); }
       }
     }
 
