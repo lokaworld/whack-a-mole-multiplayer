@@ -1523,24 +1523,34 @@
       if (S.pc) return;
       console.log('WebRTC: Initializing...', isHost ? 'HOST' : 'GUEST');
 
-      // Fetch TURN credentials from server
-      let iceServers = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ];
-      try {
-        const resp = await fetch('/api/turn-credentials');
-        const servers = await resp.json();
-        if (servers && servers.length > 0) {
-          iceServers = servers;
-          console.log('WebRTC: Got ICE servers from API:', iceServers.length, 'servers');
-        }
-      } catch (e) {
-        console.warn('WebRTC: Failed to fetch TURN credentials, using STUN only:', e.message);
-      }
-
-      const config = { iceServers, iceTransportPolicy: 'all' };
-      console.log('WebRTC: Using ICE config:', JSON.stringify(config.iceServers.map(s => s.urls)));
+      const config = {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:a.relay.metered.ca:80',
+            username: 'd21ed93e8844b2c2f47d38b0',
+            credential: 'lYicjfl9zDw/4FU'
+          },
+          {
+            urls: 'turn:a.relay.metered.ca:80?transport=tcp',
+            username: 'd21ed93e8844b2c2f47d38b0',
+            credential: 'lYicjfl9zDw/4FU'
+          },
+          {
+            urls: 'turn:a.relay.metered.ca:443',
+            username: 'd21ed93e8844b2c2f47d38b0',
+            credential: 'lYicjfl9zDw/4FU'
+          },
+          {
+            urls: 'turns:a.relay.metered.ca:443',
+            username: 'd21ed93e8844b2c2f47d38b0',
+            credential: 'lYicjfl9zDw/4FU'
+          }
+        ],
+        iceTransportPolicy: 'all'
+      };
+      console.log('WebRTC: Using', config.iceServers.length, 'ICE servers (STUN + TURN)');
       S.pc = new RTCPeerConnection(config);
       iceCandidatesQueue = [];
       remoteStream = new MediaStream();
