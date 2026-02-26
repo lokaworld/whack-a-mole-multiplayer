@@ -9,6 +9,7 @@ const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
 const METERED_API_KEY = process.env.METERED_API_KEY || '';
+const METERED_APP_NAME = process.env.METERED_APP_NAME || '';
 
 // ---------- HTTP server (serves index.html + TURN credentials API) ----------
 const server = http.createServer((req, res) => {
@@ -17,8 +18,8 @@ const server = http.createServer((req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Access-Control-Allow-Origin', '*');
 
-        if (!METERED_API_KEY) {
-            // No API key — return STUN-only config
+        if (!METERED_API_KEY || !METERED_APP_NAME) {
+            console.log('TURN: No API key or app name set, returning STUN only. METERED_API_KEY:', METERED_API_KEY ? 'SET' : 'MISSING', 'METERED_APP_NAME:', METERED_APP_NAME ? METERED_APP_NAME : 'MISSING');
             res.writeHead(200);
             res.end(JSON.stringify([
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -28,14 +29,17 @@ const server = http.createServer((req, res) => {
         }
 
         // Fetch TURN credentials from Metered.ca
-        const apiUrl = `https://whackmole.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
+        const apiUrl = `https://${METERED_APP_NAME}.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
+        console.log('TURN: Fetching credentials from:', apiUrl.replace(METERED_API_KEY, '***'));
         const https = require('https');
         https.get(apiUrl, (apiRes) => {
             let body = '';
             apiRes.on('data', chunk => body += chunk);
             apiRes.on('end', () => {
+                console.log('TURN: API response status:', apiRes.statusCode, 'body length:', body.length);
                 try {
                     const creds = JSON.parse(body);
+                    console.log('TURN: Got', creds.length, 'TURN servers from Metered');
                     // Add STUN servers too
                     const iceServers = [
                         { urls: 'stun:stun.l.google.com:19302' },
@@ -45,7 +49,7 @@ const server = http.createServer((req, res) => {
                     res.writeHead(200);
                     res.end(JSON.stringify(iceServers));
                 } catch (e) {
-                    console.error('TURN API parse error:', e);
+                    console.error('TURN API parse error:', e, 'Body:', body);
                     res.writeHead(200);
                     res.end(JSON.stringify([
                         { urls: 'stun:stun.l.google.com:19302' },
