@@ -8,9 +8,63 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
+const METERED_API_KEY = process.env.METERED_API_KEY || '';
 
-// ---------- HTTP server (serves index.html) ----------
+// ---------- HTTP server (serves index.html + TURN credentials API) ----------
 const server = http.createServer((req, res) => {
+    // API endpoint for TURN credentials
+    if (req.url === '/api/turn-credentials') {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+
+        if (!METERED_API_KEY) {
+            // No API key — return STUN-only config
+            res.writeHead(200);
+            res.end(JSON.stringify([
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]));
+            return;
+        }
+
+        // Fetch TURN credentials from Metered.ca
+        const apiUrl = `https://whackmole.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
+        const https = require('https');
+        https.get(apiUrl, (apiRes) => {
+            let body = '';
+            apiRes.on('data', chunk => body += chunk);
+            apiRes.on('end', () => {
+                try {
+                    const creds = JSON.parse(body);
+                    // Add STUN servers too
+                    const iceServers = [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        ...creds
+                    ];
+                    res.writeHead(200);
+                    res.end(JSON.stringify(iceServers));
+                } catch (e) {
+                    console.error('TURN API parse error:', e);
+                    res.writeHead(200);
+                    res.end(JSON.stringify([
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]));
+                }
+            });
+        }).on('error', (e) => {
+            console.error('TURN API fetch error:', e);
+            res.writeHead(200);
+            res.end(JSON.stringify([
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]));
+        });
+        return;
+    }
+
+    // Serve static files
     let filePath = req.url === '/' ? '/index.html' : req.url;
     filePath = path.join(__dirname, filePath);
     const ext = path.extname(filePath).toLowerCase();
