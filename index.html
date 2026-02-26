@@ -1525,8 +1525,29 @@
       const config = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:a.relay.metered.ca:80',
+            username: 'e8dd65b92f7048b196bf6e23',
+            credential: '5V3dHbAhEn/vl/GS'
+          },
+          {
+            urls: 'turn:a.relay.metered.ca:80?transport=tcp',
+            username: 'e8dd65b92f7048b196bf6e23',
+            credential: '5V3dHbAhEn/vl/GS'
+          },
+          {
+            urls: 'turn:a.relay.metered.ca:443',
+            username: 'e8dd65b92f7048b196bf6e23',
+            credential: '5V3dHbAhEn/vl/GS'
+          },
+          {
+            urls: 'turns:a.relay.metered.ca:443',
+            username: 'e8dd65b92f7048b196bf6e23',
+            credential: '5V3dHbAhEn/vl/GS'
+          }
+        ],
+        iceTransportPolicy: 'all'
       };
       S.pc = new RTCPeerConnection(config);
       iceCandidatesQueue = [];
