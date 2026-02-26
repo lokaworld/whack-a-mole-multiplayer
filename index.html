@@ -1525,27 +1525,28 @@
 
       const config = {
         iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
           {
-            urls: 'turn:a.relay.metered.ca:80',
-            username: 'd21ed93e8844b2c2f47d38b0',
-            credential: 'lYicjfl9zDw/4FU'
+            urls: 'stun:stun.relay.metered.ca:80'
           },
           {
-            urls: 'turn:a.relay.metered.ca:80?transport=tcp',
+            urls: 'turn:global.relay.metered.ca:80',
             username: 'd21ed93e8844b2c2f47d38b0',
-            credential: 'lYicjfl9zDw/4FU'
+            credential: 'lYicijfB9zDw/4FU'
           },
           {
-            urls: 'turn:a.relay.metered.ca:443',
+            urls: 'turn:global.relay.metered.ca:80?transport=tcp',
             username: 'd21ed93e8844b2c2f47d38b0',
-            credential: 'lYicjfl9zDw/4FU'
+            credential: 'lYicijfB9zDw/4FU'
           },
           {
-            urls: 'turns:a.relay.metered.ca:443',
+            urls: 'turn:global.relay.metered.ca:443',
             username: 'd21ed93e8844b2c2f47d38b0',
-            credential: 'lYicjfl9zDw/4FU'
+            credential: 'lYicijfB9zDw/4FU'
+          },
+          {
+            urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+            username: 'd21ed93e8844b2c2f47d38b0',
+            credential: 'lYicijfB9zDw/4FU'
           }
         ],
         iceTransportPolicy: 'all'
