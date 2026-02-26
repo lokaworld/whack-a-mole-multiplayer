@@ -720,7 +720,7 @@
   <!-- REMOTE VIDEO FEED -->
   <div id="remoteVideoContainer">
     <div class="video-label">LIVE FEED</div>
-    <video id="remoteVideo" autoplay playsinline muted></video>
+    <video id="remoteVideo" autoplay playsinline></video>
   </div>
 
   <!-- CONNECTION DOT -->
@@ -1193,6 +1193,17 @@
       if (!S.paused) scheduleSpawn();
     }
 
+    function cleanupWebRTC() {
+      if (S.pc) {
+        S.pc.close();
+        S.pc = null;
+      }
+      remoteStream = null;
+      const remoteVideo = document.getElementById('remoteVideo');
+      if (remoteVideo) remoteVideo.srcObject = null;
+      document.getElementById('remoteVideoContainer').style.display = 'none';
+    }
+
     function gameOver() {
       S.gameActive = false; stopBgm(); sfxGameOver();
       if (S.spawnTimer) clearTimeout(S.spawnTimer);
@@ -1222,11 +1233,13 @@
       setTimeout(() => showScreen('gameOverScreen'), 600);
     }
     function retryGame() {
+      cleanupWebRTC();
       if (S.mpMode && S.ws) { S.ws.close(); S.ws = null; }
       S.mpMode = false; startGame();
     }
     function goToMenu() {
       stopBgm();
+      cleanupWebRTC();
       if (S.ws) { S.ws.close(); S.ws = null; }
       S.mpMode = false;
       document.getElementById('hud').style.display = 'none';
@@ -1504,13 +1517,25 @@
 
     // ===== WEBRTC VIDEO FEED (New) =====
     let iceCandidatesQueue = [];
+    let remoteStream = null;
 
     async function initWebRTC(isHost) {
       if (S.pc) return;
       console.log('WebRTC: Initializing...', isHost ? 'HOST' : 'GUEST');
-      const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+      const config = {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      };
       S.pc = new RTCPeerConnection(config);
       iceCandidatesQueue = [];
+      remoteStream = new MediaStream();
+
+      // Pre-attach the remote stream to the video element immediately
+      const remoteVideo = document.getElementById('remoteVideo');
+      const container = document.getElementById('remoteVideoContainer');
+      remoteVideo.srcObject = remoteStream;
 
       // Add local stream (wait if not ready)
       if (!S.localStream && webcamReady) {
@@ -1529,17 +1554,43 @@
         console.warn('WebRTC: Local stream not found, connection may have no video from me');
       }
 
-      // Handle remote stream
+      // Handle remote tracks — add each track to our persistent remoteStream
       S.pc.ontrack = (event) => {
-        console.log('WebRTC: Received remote track', event.streams);
-        const remoteVideo = document.getElementById('remoteVideo');
-        const container = document.getElementById('remoteVideoContainer');
-        if (event.streams && event.streams[0]) {
-          remoteVideo.srcObject = event.streams[0];
-          container.style.display = 'block';
-          remoteVideo.play().then(() => console.log('WebRTC: Remote video playing'))
-            .catch(e => console.warn('WebRTC: Remote video play failed:', e));
+        console.log('WebRTC: Received remote track, kind:', event.track.kind, 'readyState:', event.track.readyState);
+        console.log('WebRTC: event.streams:', event.streams);
+
+        // Add track to our remote stream
+        remoteStream.addTrack(event.track);
+        console.log('WebRTC: remoteStream now has', remoteStream.getTracks().length, 'tracks:',
+          remoteStream.getTracks().map(t => t.kind + '(' + t.readyState + ')').join(', '));
+
+        // Show the container
+        container.style.display = 'block';
+
+        // Try to play
+        tryPlayRemoteVideo();
+
+        // Monitor track state changes
+        event.track.onunmute = () => {
+          console.log('WebRTC: Remote track unmuted:', event.track.kind);
+          tryPlayRemoteVideo();
+        };
+        event.track.onended = () => {
+          console.log('WebRTC: Remote track ended:', event.track.kind);
+        };
+      };
+
+      // Monitor connection state
+      S.pc.onconnectionstatechange = () => {
+        console.log('WebRTC: Connection state:', S.pc.connectionState);
+        if (S.pc.connectionState === 'connected') {
+          console.log('WebRTC: Peer connected! Attempting video play...');
+          tryPlayRemoteVideo();
         }
+      };
+
+      S.pc.oniceconnectionstatechange = () => {
+        console.log('WebRTC: ICE connection state:', S.pc.iceConnectionState);
       };
 
       // Handle ICE candidates
@@ -1558,29 +1609,63 @@
       }
     }
 
+    function tryPlayRemoteVideo() {
+      const remoteVideo = document.getElementById('remoteVideo');
+      if (!remoteVideo.srcObject) return;
+
+      const tracks = remoteVideo.srcObject.getTracks();
+      const videoTracks = tracks.filter(t => t.kind === 'video');
+      console.log('WebRTC: tryPlayRemoteVideo - video tracks:', videoTracks.length,
+        'paused:', remoteVideo.paused, 'readyState:', remoteVideo.readyState);
+
+      if (videoTracks.length === 0) {
+        console.log('WebRTC: No video tracks yet, waiting...');
+        return;
+      }
+
+      // Ensure video is not paused
+      if (remoteVideo.paused) {
+        remoteVideo.play()
+          .then(() => console.log('WebRTC: Remote video playing successfully!'))
+          .catch(e => {
+            console.warn('WebRTC: Remote video play failed:', e.message);
+            // Retry after a short delay
+            setTimeout(() => {
+              remoteVideo.play()
+                .then(() => console.log('WebRTC: Remote video playing on retry!'))
+                .catch(e2 => console.warn('WebRTC: Retry also failed:', e2.message));
+            }, 1000);
+          });
+      } else {
+        console.log('WebRTC: Remote video already playing');
+      }
+    }
+
     async function handleWebRTCSignal(data) {
       if (!S.pc) await initWebRTC(false);
 
-      if (data.offer) {
-        console.log('WebRTC: Received offer');
-        await S.pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-        const answer = await S.pc.createAnswer();
-        await S.pc.setLocalDescription(answer);
-        S.ws.send(JSON.stringify({ type: 'signal', data: { answer } }));
-        processQueuedCandidates();
-      } else if (data.answer) {
-        console.log('WebRTC: Received answer');
-        await S.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-        processQueuedCandidates();
-      } else if (data.candidate) {
-        console.log('WebRTC: Received ICE candidate');
-        if (S.pc.remoteDescription && S.pc.remoteDescription.type) {
-          try {
+      try {
+        if (data.offer) {
+          console.log('WebRTC: Received offer');
+          await S.pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await S.pc.createAnswer();
+          await S.pc.setLocalDescription(answer);
+          S.ws.send(JSON.stringify({ type: 'signal', data: { answer } }));
+          processQueuedCandidates();
+        } else if (data.answer) {
+          console.log('WebRTC: Received answer');
+          await S.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          processQueuedCandidates();
+        } else if (data.candidate) {
+          console.log('WebRTC: Received ICE candidate');
+          if (S.pc.remoteDescription && S.pc.remoteDescription.type) {
             await S.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (e) { console.warn('WebRTC: ICE candidate error:', e); }
-        } else {
-          iceCandidatesQueue.push(data.candidate);
+          } else {
+            iceCandidatesQueue.push(data.candidate);
+          }
         }
+      } catch (e) {
+        console.warn('WebRTC: Signal handling error:', e);
       }
     }
 
