@@ -1286,7 +1286,7 @@
       try {
         const v = document.getElementById('bgVideo');
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15, max: 15 }, facingMode: 'user' }
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
         });
         S.localStream = stream;
         v.srcObject = stream;
@@ -1344,29 +1344,41 @@
       }
 
       const lm = res.poseLandmarks;
-      // Pose landmarks: 15 = left wrist, 16 = right wrist
-      // Note: pose coordinates are NOT mirrored, but our video is mirrored via CSS scaleX(-1)
-      // So we need to mirror X: (1 - x)
-      const wrists = [
-        { lm: lm[16], glow: glowL, core: coreL, side: 'L' },
-        { lm: lm[15], glow: glowR, core: coreR, side: 'R' }
+      // Pose landmarks: 15=left wrist, 16=right wrist, 17=left pinky, 18=right pinky, 19=left index, 20=right index
+      // Approximate palm center = midpoint between wrist and average of index+pinky tips
+      // Note: video is mirrored via CSS scaleX(-1), so mirror X: (1 - x)
+      function palmCenter(wrist, index, pinky) {
+        if (!wrist || wrist.visibility < 0.5) return null;
+        // If finger landmarks available, compute palm center
+        if (index && index.visibility >= 0.3 && pinky && pinky.visibility >= 0.3) {
+          const fingerMidX = (index.x + pinky.x) / 2;
+          const fingerMidY = (index.y + pinky.y) / 2;
+          return { x: 1 - (wrist.x * 0.4 + fingerMidX * 0.6), y: wrist.y * 0.4 + fingerMidY * 0.6, vis: wrist.visibility };
+        }
+        // Fallback to wrist if fingers not visible
+        return { x: 1 - wrist.x, y: wrist.y, vis: wrist.visibility };
+      }
+
+      const hands = [
+        { palm: palmCenter(lm[16], lm[20], lm[18]), glow: glowL, core: coreL, side: 'L' },
+        { palm: palmCenter(lm[15], lm[19], lm[17]), glow: glowR, core: coreR, side: 'R' }
       ];
 
       // Store positions for multiplayer hand sync
       lastHandPositions = [];
-      wrists.forEach(({ lm: w }) => {
-        if (w && w.visibility >= 0.5) lastHandPositions.push({ x: 1 - w.x, y: w.y });
+      hands.forEach(({ palm }) => {
+        if (palm) lastHandPositions.push({ x: palm.x, y: palm.y });
       });
 
-      wrists.forEach(({ lm: w, glow, core, side }) => {
-        if (!w || w.visibility < 0.5) {
+      hands.forEach(({ palm, glow, core, side }) => {
+        if (!palm) {
           glow.style.display = 'none';
           core.style.display = 'none';
           return;
         }
 
-        const hx = (1 - w.x) * window.innerWidth;
-        const hy = w.y * window.innerHeight;
+        const hx = palm.x * window.innerWidth;
+        const hy = palm.y * window.innerHeight;
 
         glow.style.display = 'block';
         glow.style.left = hx + 'px';
