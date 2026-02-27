@@ -197,15 +197,30 @@
       padding: 6px 14px
     }
 
-    .hud-heart {
-      width: clamp(28px, 4vw, 42px);
-      height: clamp(28px, 4vw, 42px);
-      transition: all .3s
+    .hud-timer {
+      font-size: clamp(1.3rem, 3.5vw, 2rem);
+      font-weight: 900;
+      color: #ffd700;
+      letter-spacing: 2px;
+      text-shadow: 0 0 10px rgba(255, 215, 0, .5)
     }
 
-    .hud-heart.lost {
-      opacity: .15;
-      transform: scale(.6)
+    .hud-timer.urgent {
+      color: #ff3b30;
+      text-shadow: 0 0 15px rgba(255, 59, 48, .6);
+      animation: timerPulse .5s infinite
+    }
+
+    @keyframes timerPulse {
+
+      0%,
+      100% {
+        transform: scale(1)
+      }
+
+      50% {
+        transform: scale(1.15)
+      }
     }
 
     .hud-right {
@@ -751,7 +766,9 @@
 
   <!-- HUD (in-game) -->
   <div id="hud" style="display:none">
-    <div class="hud-left" id="livesContainer"></div>
+    <div class="hud-left">
+      <div class="hud-timer" id="timerDisplay">1:00</div>
+    </div>
     <div class="hud-right">
       <div class="score-box">
         <div class="score-val" id="scoreDisplay">0</div>
@@ -805,14 +822,15 @@
     // ============================================================
 
     const S = {
-      score: 0, lives: 3, maxLives: 3, gameActive: false, paused: false,
+      score: 0, gameActive: false, paused: false,
       gameStartTime: 0, minSpawn: 1, maxSpawn: 3,
       dangerChance: 0.2, maxDangerChance: 0.4, dangerWarningTime: 1.5,
       diffInterval: 15, majorSpikeTime: 75, lastDiffTime: 0,
       tutorialPhase: 0, holes: [], spawnTimer: null, playerMode: 1,
       helmetHits: new Map(), processedHits: new Set(),
+      timerInterval: null, timeLeft: 60, gameDuration: 60,
       // Multiplayer
-      mpMode: false, myRole: null, ws: null, oppScore: 0, oppLives: 3,
+      mpMode: false, myRole: null, ws: null, oppScore: 0,
       handSendInterval: null,
       pc: null, localStream: null
     };
@@ -866,18 +884,13 @@
     <line x1="105" y1="60" x2="85" y2="67" stroke="#7f0000" stroke-width="4" stroke-linecap="round"/>
     <path d="M45,100 Q57,88 70,100 Q83,88 95,100" stroke="#7f0000" stroke-width="4" fill="none" stroke-linecap="round"/>
     <text x="70" y="50" text-anchor="middle" font-size="22" fill="#FFD700" font-weight="bold">⚠</text>`;
-      } else if (type === 'heart') {
-        s = `<path d="M70,120 C25,90 10,55 40,35 C55,25 70,40 70,40 C70,40 85,25 100,35 C130,55 115,90 70,120Z" fill="#FF2D55" stroke="#C2185B" stroke-width="2"/>
-    <path d="M48,50 Q58,38 68,50" fill="rgba(255,255,255,.4)"/>
-    <text x="70" y="82" text-anchor="middle" font-size="20" fill="white" font-weight="bold">+</text>`;
       }
       return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${s}</svg>`)}`;
     }
     const MOLE_IMG = {};
-    ['normal', 'helmet', 'helmet_damaged', 'danger', 'heart'].forEach(t => { const i = new Image(); i.src = moleSVG(t); MOLE_IMG[t] = i });
+    ['normal', 'helmet', 'helmet_damaged', 'danger'].forEach(t => { const i = new Image(); i.src = moleSVG(t); MOLE_IMG[t] = i });
 
-    // Heart SVG
-    const heartSrc = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z" fill="#FF1744"/></svg>')}`;
+
 
     // ===== FOREST BORDER (draw with Canvas) =====
     function drawForestBorder() {
@@ -994,18 +1007,33 @@
 
     // ===== HUD =====
     function buildHUD() {
-      const lc = document.getElementById('livesContainer');
-      lc.innerHTML = '';
-      for (let i = 0; i < S.maxLives; i++) {
-        const h = document.createElement('img');
-        h.src = heartSrc; h.className = 'hud-heart'; h.id = `hl${i}`;
-        lc.appendChild(h);
-      }
       document.getElementById('scoreDisplay').textContent = '0';
       document.getElementById('hud').style.display = 'flex';
+      updateTimerDisplay();
     }
     function updateScore(a) { S.score += a; document.getElementById('scoreDisplay').textContent = S.score }
-    function updateLives() { for (let i = 0; i < S.maxLives; i++) { document.getElementById(`hl${i}`).classList.toggle('lost', i >= S.lives) } }
+    function updateTimerDisplay() {
+      const mins = Math.floor(S.timeLeft / 60);
+      const secs = S.timeLeft % 60;
+      const el = document.getElementById('timerDisplay');
+      el.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      el.classList.toggle('urgent', S.timeLeft <= 10);
+    }
+    function startTimer() {
+      if (S.timerInterval) clearInterval(S.timerInterval);
+      S.timeLeft = S.gameDuration;
+      updateTimerDisplay();
+      S.timerInterval = setInterval(() => {
+        if (S.paused) return;
+        S.timeLeft--;
+        updateTimerDisplay();
+        if (S.timeLeft <= 0) {
+          clearInterval(S.timerInterval);
+          S.timerInterval = null;
+          gameOver();
+        }
+      }, 1000);
+    }
 
     // ===== SHOW/HIDE MOLES =====
     function showMole(idx, type) {
@@ -1080,18 +1108,12 @@
         }
       } else if (type === 'danger') {
         S.processedHits.add(idx); sfxDanger();
-        burstStars(cx, cy, '#ff3b30'); flashScreen(); loseLife();
-        setTimeout(() => hideMole(idx, true), 200);
-        setTimeout(() => S.processedHits.delete(idx), 400);
-      } else if (type === 'heart') {
-        S.processedHits.add(idx); sfxHeart();
-        burstStars(cx, cy, '#ff2d55');
-        if (S.lives < S.maxLives) { S.lives++; updateLives(); scorePopup(cx, cy, '❤️+1', 'plus') }
+        burstStars(cx, cy, '#ff3b30'); flashScreen();
+        scorePopup(cx, cy, '-5', 'minus'); updateScore(-5);
         setTimeout(() => hideMole(idx, true), 200);
         setTimeout(() => S.processedHits.delete(idx), 400);
       }
     }
-    function loseLife() { S.lives--; updateLives(); if (S.lives <= 0) gameOver() }
     function flashScreen() { const f = document.getElementById('flashOverlay'); f.style.opacity = '1'; setTimeout(() => f.style.opacity = '0', 150) }
 
     // ===== EFFECTS =====
@@ -1119,15 +1141,16 @@
 
     function startGame() {
       if (!audioCtx) initAudio();
-      S.score = 0; S.lives = 3; S.gameActive = true; S.paused = false;
+      S.score = 0; S.gameActive = true; S.paused = false;
       S.minSpawn = 1; S.maxSpawn = 3; S.dangerChance = 0.2; S.dangerWarningTime = 1.5;
       S.tutorialPhase = 0; S.gameStartTime = Date.now(); S.lastDiffTime = Date.now();
+      S.timeLeft = S.gameDuration;
       S.helmetHits.clear(); S.processedHits.clear();
 
       // Hide all screens (menu, game over) to show gameplay
       document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
       drawForestBorder();
-      buildHUD(); buildBarrels(); updateLives();
+      buildHUD(); buildBarrels();
       startBgm();
       initMediaPipe();
 
@@ -1137,12 +1160,14 @@
         document.getElementById('oppScoreMP').textContent = '0';
         document.getElementById('connDot').style.display = 'block';
         startHandSync();
+        // Timer is driven by server in multiplayer
       } else {
         document.getElementById('dualScores').style.display = 'none';
         document.getElementById('connDot').style.display = 'none';
         const b = document.getElementById('tutorialBanner');
         b.textContent = '🎯 Tutorial: Whack the normal moles!'; b.style.opacity = '1';
         runTutorial();
+        startTimer();
       }
     }
 
@@ -1166,8 +1191,7 @@
       if (S.tutorialPhase === 0) { showMole(idx, 'normal') }
       else if (S.tutorialPhase === 1) { showMole(idx, r < .5 ? 'normal' : 'helmet') }
       else {
-        if (r < .1 && S.lives < S.maxLives) showMole(idx, 'heart');
-        else if (r < S.dangerChance) spawnDanger();
+        if (r < S.dangerChance) spawnDanger();
         else showMole(idx, r < .55 ? 'normal' : 'helmet');
       }
     }
@@ -1207,6 +1231,7 @@
     function gameOver() {
       S.gameActive = false; stopBgm(); sfxGameOver();
       if (S.spawnTimer) clearTimeout(S.spawnTimer);
+      if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
       if (S.handSendInterval) { clearInterval(S.handSendInterval); S.handSendInterval = null; }
       S.holes.forEach(h => { if (h.timeout) clearTimeout(h.timeout) });
       document.getElementById('finalScore').textContent = S.score;
@@ -1219,15 +1244,21 @@
       const og = document.getElementById('oppGlow1'), oc = document.getElementById('oppCore1');
       if (og) og.style.display = 'none'; if (oc) oc.style.display = 'none';
       if (S.mpMode) {
-        const iWon = S.score >= S.oppScore;
-        document.getElementById('goTitle').textContent = iWon ? '🏆 YOU WIN!' : '😢 YOU LOSE';
-        document.getElementById('goTitle').style.color = iWon ? '#ffd700' : '#ff5252';
+        const iWon = S.score > S.oppScore;
+        const isTie = S.score === S.oppScore;
+        if (isTie) {
+          document.getElementById('goTitle').textContent = '🤝 TIE GAME!';
+          document.getElementById('goTitle').style.color = '#ffd700';
+        } else {
+          document.getElementById('goTitle').textContent = iWon ? '🏆 YOU WIN!' : '😢 YOU LOSE';
+          document.getElementById('goTitle').style.color = iWon ? '#ffd700' : '#ff5252';
+        }
         document.getElementById('goSubtitle').textContent = 'Your Score';
         document.getElementById('goOppScore').textContent = `Opponent: ${S.oppScore}`;
       } else {
-        document.getElementById('goTitle').textContent = 'GAME OVER';
-        document.getElementById('goTitle').style.color = '#ff5252';
-        document.getElementById('goSubtitle').textContent = 'Your Score';
+        document.getElementById('goTitle').textContent = '⏰ TIME\'S UP!';
+        document.getElementById('goTitle').style.color = '#ffd700';
+        document.getElementById('goSubtitle').textContent = 'Final Score';
         document.getElementById('goOppScore').textContent = '';
       }
       setTimeout(() => showScreen('gameOverScreen'), 600);
@@ -1255,7 +1286,7 @@
       try {
         const v = document.getElementById('bgVideo');
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+          video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15, max: 15 }, facingMode: 'user' }
         });
         S.localStream = stream;
         v.srcObject = stream;
@@ -1411,7 +1442,8 @@
         case 'game_start':
           S.mpMode = true;
           S.myRole = msg.role;
-          S.oppScore = 0; S.oppLives = 3;
+          S.oppScore = 0;
+          S.timeLeft = S.gameDuration;
           startGame();
           break;
         case 'spawn_mole':
@@ -1462,21 +1494,9 @@
           }
           break;
         }
-        case 'life_lost': {
-          const oppRole = S.myRole === 'host' ? 'guest' : 'host';
-          if (msg.role === S.myRole) {
-            S.lives = msg.lives[S.myRole];
-            updateLives(); flashScreen();
-            sfxDanger();
-          }
-          S.oppLives = msg.lives[oppRole];
-          break;
-        }
-        case 'life_gained':
-          if (msg.role === S.myRole) {
-            S.lives = msg.lives[S.myRole];
-            updateLives(); sfxHeart();
-          }
+        case 'timer_sync':
+          S.timeLeft = msg.timeLeft;
+          updateTimerDisplay();
           break;
         case 'opponent_hands':
           renderOpponentHands(msg.positions);
@@ -1573,7 +1593,17 @@
 
       if (S.localStream) {
         console.log('WebRTC: Adding local tracks');
-        S.localStream.getTracks().forEach(track => S.pc.addTrack(track, S.localStream));
+        S.localStream.getTracks().forEach(track => {
+          const sender = S.pc.addTrack(track, S.localStream);
+          // Limit video bitrate to save data
+          if (track.kind === 'video' && sender.setParameters) {
+            const params = sender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
+            params.encodings[0].maxBitrate = 100000; // 100 kbps
+            params.encodings[0].maxFramerate = 15;
+            sender.setParameters(params).catch(e => console.warn('Could not set encoding params:', e));
+          }
+        });
       } else {
         console.warn('WebRTC: Local stream not found, connection may have no video from me');
       }

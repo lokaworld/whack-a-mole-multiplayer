@@ -98,9 +98,9 @@ function genCode() {
     return code;
 }
 
-// ---- Mole types & spawn logic (server-authoritative) ----
-const MOLE_TYPES = ['normal', 'helmet', 'danger', 'heart'];
+const MOLE_TYPES = ['normal', 'helmet', 'danger'];
 const HOLE_COUNT = 7;
+const GAME_DURATION = 60; // 1 minute
 
 class Room {
     constructor(hostWs) {
@@ -108,11 +108,12 @@ class Room {
         this.host = hostWs;
         this.guest = null;
         this.scores = { host: 0, guest: 0 };
-        this.lives = { host: 3, guest: 3 };
         this.holes = new Array(HOLE_COUNT).fill(null); // null or { type, spawnedAt }
         this.gameActive = false;
         this.spawnTimer = null;
         this.diffTimer = null;
+        this.gameTimer = null;
+        this.timeLeft = GAME_DURATION;
         this.gameStartTime = 0;
         this.minSpawn = 1;
         this.maxSpawn = 3;
@@ -134,7 +135,7 @@ class Room {
     startGame() {
         this.gameActive = true;
         this.scores = { host: 0, guest: 0 };
-        this.lives = { host: 3, guest: 3 };
+        this.timeLeft = GAME_DURATION;
         this.holes.fill(null);
         this.helmetHits.clear();
         this.gameStartTime = Date.now();
@@ -158,6 +159,16 @@ class Room {
             if (this.maxSpawn < this.minSpawn + 0.1) this.maxSpawn = this.minSpawn + 0.1;
             this.dangerChance = Math.min(0.4, this.dangerChance + 0.02);
         }, 15000);
+
+        // Game timer - 1 minute countdown
+        this.gameTimer = setInterval(() => {
+            if (!this.gameActive) return;
+            this.timeLeft--;
+            this.broadcast({ type: 'timer_sync', timeLeft: this.timeLeft });
+            if (this.timeLeft <= 0) {
+                this.endGame();
+            }
+        }, 1000);
 
         this.scheduleSpawn();
     }
@@ -184,15 +195,14 @@ class Room {
         } else if (this.tutorialPhase === 1) {
             type = r < 0.5 ? 'normal' : 'helmet';
         } else {
-            if (r < 0.08) type = 'heart';
-            else if (r < this.dangerChance) type = 'danger';
+            if (r < this.dangerChance) type = 'danger';
             else type = r < 0.55 ? 'normal' : 'helmet';
         }
 
         this.holes[idx] = { type, spawnedAt: Date.now() };
         if (type === 'helmet') this.helmetHits.set(idx, { host: 0, guest: 0 });
 
-        const duration = type === 'danger' ? 2500 : (type === 'heart' ? 3000 : (1500 + Math.random() * 1500));
+        const duration = type === 'danger' ? 2500 : (1500 + Math.random() * 1500);
         this.broadcast({ type: 'spawn_mole', index: idx, moleType: type });
 
         // Auto-hide after duration
@@ -231,27 +241,12 @@ class Room {
                 consumed = true;
             }
         } else if (type === 'danger') {
-            // Lose a life
-            this.lives[role]--;
-            this.broadcast({
-                type: 'life_lost', role,
-                lives: this.lives
-            });
-            consumed = true;
-            // Check game over
-            if (this.lives[role] <= 0) {
-                this.endGame();
-                return;
-            }
-        } else if (type === 'heart') {
-            if (this.lives[role] < 3) {
-                this.lives[role]++;
-                this.broadcast({ type: 'life_gained', role, lives: this.lives });
-            }
+            // Lose points instead of lives
+            points = -5;
             consumed = true;
         }
 
-        if (points > 0) {
+        if (points !== 0) {
             this.scores[role] += points;
             this.broadcast({
                 type: 'score_update',
@@ -273,11 +268,12 @@ class Room {
         this.gameActive = false;
         if (this.spawnTimer) clearTimeout(this.spawnTimer);
         if (this.diffTimer) clearInterval(this.diffTimer);
-        const winner = this.scores.host >= this.scores.guest ? 'host' : 'guest';
+        if (this.gameTimer) clearInterval(this.gameTimer);
+        const winner = this.scores.host > this.scores.guest ? 'host' : (this.scores.guest > this.scores.host ? 'guest' : 'tie');
         this.broadcast({
             type: 'game_over',
             scores: this.scores,
-            lives: this.lives,
+            timeLeft: this.timeLeft,
             winner
         });
     }
@@ -372,7 +368,7 @@ wss.on('connection', (ws) => {
                             // Start game in single-player with server-side spawning
                             myRoom.gameActive = true;
                             myRoom.scores = { host: 0, guest: 0 };
-                            myRoom.lives = { host: 3, guest: 3 };
+                            myRoom.timeLeft = GAME_DURATION;
                             myRoom.holes.fill(null);
                             myRoom.helmetHits.clear();
                             myRoom.gameStartTime = Date.now();
@@ -395,6 +391,16 @@ wss.on('connection', (ws) => {
                                 if (myRoom.maxSpawn < myRoom.minSpawn + 0.1) myRoom.maxSpawn = myRoom.minSpawn + 0.1;
                                 myRoom.dangerChance = Math.min(0.4, myRoom.dangerChance + 0.02);
                             }, 15000);
+
+                            // Game timer
+                            myRoom.gameTimer = setInterval(() => {
+                                if (!myRoom || !myRoom.gameActive) return;
+                                myRoom.timeLeft--;
+                                myRoom.broadcast({ type: 'timer_sync', timeLeft: myRoom.timeLeft });
+                                if (myRoom.timeLeft <= 0) {
+                                    myRoom.endGame();
+                                }
+                            }, 1000);
 
                             myRoom.scheduleSpawn();
 
@@ -452,23 +458,11 @@ function startBotAI(room) {
                     points = 20; consumed = true;
                 }
             } else if (type === 'danger') {
-                room.lives.guest--;
-                room.broadcast({ type: 'life_lost', role: 'guest', lives: room.lives });
-                consumed = true;
-                if (room.lives.guest <= 0) {
-                    room.endGame();
-                    clearInterval(botLoop);
-                    return;
-                }
-            } else if (type === 'heart') {
-                if (room.lives.guest < 3) {
-                    room.lives.guest++;
-                    room.broadcast({ type: 'life_gained', role: 'guest', lives: room.lives });
-                }
+                points = -5;
                 consumed = true;
             }
 
-            if (points > 0) {
+            if (points !== 0) {
                 room.scores.guest += points;
                 room.broadcast({
                     type: 'score_update',
